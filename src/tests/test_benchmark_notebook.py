@@ -16,7 +16,7 @@ def test_single_notebook_has_safe_smoke_defaults_and_no_outputs():
     assert not (folder / "colab_benchmark.ipynb").exists()
     source = "\n".join("".join(c["source"]) for c in notebook["cells"])
     assert 'MODE = "sample"' in source
-    assert "COUNT = 100" in source
+    assert "COUNT = 500" in source
     assert "RESUME = False" in source
     assert "SHIFT_OWNER" not in source
     assert "TAKEOVER" not in source
@@ -47,15 +47,16 @@ def test_notebook_refuses_cached_pipeline_modules_before_setup():
         exec(code, {"sys": SimpleNamespace(modules={"src.benchmark.runner": object()})})
 
 
-def test_hf_notebook_defaults_to_private_dataset_smoke_without_embedded_token():
+def test_notebook_defaults_to_drive_smoke_without_embedded_token():
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
     nb = json.loads(path.read_text(encoding="utf-8"))
     config = next(c for c in nb["cells"] if "MODE = " in "".join(c["source"]))
     values = {}
     exec("".join(config["source"]), values)
-    assert values["STORAGE_BACKEND"] == "huggingface"
+    assert values["STORAGE_BACKEND"] == "drive"
     assert values["HF_REPO_ID"] == "PancakeDang/arxiv-nhom1-introds"
-    assert values["MODE"] == "sample" and values["COUNT"] == 100
+    assert values["MODE"] == "sample" and values["COUNT"] == 500
+    assert values["OFFSET"] == 500 and values["CHUNK_SIZE"] == 100
     assert values["SNAPSHOT_PATH"] == "/content/arxiv-assigned-20000.jsonl"
     assert "HF_TOKEN" not in values
 
@@ -115,7 +116,7 @@ def test_storage_toggle_selects_exactly_one_backend(toggle, expected):
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     config = next(c for c in cells if c.get("id") == "f94c4b6e")
     source = "".join(config["source"]).replace(
-        "USE_HUGGINGFACE = True", f"USE_HUGGINGFACE = {toggle}"
+        "USE_HUGGINGFACE = False", f"USE_HUGGINGFACE = {toggle}"
     )
     values = {}
     exec(source, values)
@@ -127,7 +128,7 @@ def test_storage_toggle_rejects_nonboolean():
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     source = "".join(next(c for c in cells if c.get("id") == "f94c4b6e")["source"])
     with pytest.raises((TypeError, ValueError)):
-        exec(source.replace("USE_HUGGINGFACE = True", 'USE_HUGGINGFACE = "False"'), {})
+        exec(source.replace("USE_HUGGINGFACE = False", 'USE_HUGGINGFACE = "False"'), {})
 
 
 def test_drive_authorization_does_not_read_hf_secret(tmp_path, monkeypatch):
