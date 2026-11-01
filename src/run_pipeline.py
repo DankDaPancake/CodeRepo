@@ -129,6 +129,33 @@ def is_done(rec: dict | None, data_root: Path) -> bool:
     )
 
 
+class PaperProgress:
+    """Report source completion in this chunk; references are tracked separately."""
+
+    def __init__(self, found, state, data_root):
+        self.found, self.state, self.data_root = found, state, data_root
+        self.complete = {
+            paper for paper in found if self._complete(paper)
+        }
+
+    def _complete(self, paper):
+        return bool(self.found.get(paper)) and all(
+            is_done(self.state.get((paper, v)), self.data_root)
+            for v in range(1, self.found[paper] + 1)
+        )
+
+    def record(self, paper):
+        if paper in self.complete or not self._complete(paper):
+            return
+        self.complete.add(paper)
+        if len(self.complete) % 10 == 0:
+            log.info(
+                "PAPER_PROGRESS source_terminal=%d/%d discovered papers in chunk; "
+                "includes no_tex/unavailable; references separate",
+                len(self.complete), len(self.found),
+            )
+
+
 def _publish_parser_job(
     job_queue: RedisJobQueue, data_root: Path, arxiv_id: str, version: int
 ) -> str:
@@ -478,6 +505,7 @@ def run(
             if not is_done(state.get((i, v)), data_root)
         ]
         paper_times.discovered(found, missing, todo)
+        paper_progress = PaperProgress(found, state, data_root)
         ref_thread = (
             _start_references(
                 [i for i in ids if i in found], data_root, on_record=paper_times.reference
@@ -510,6 +538,7 @@ def run(
             rec["finished_at"] = _now()
             ver_log.write(rec)
             state[(arxiv_id, version)] = rec
+            paper_progress.record(arxiv_id)
             processed.append(rec)
             paper_times.version(rec)
             if on_version is not None:
