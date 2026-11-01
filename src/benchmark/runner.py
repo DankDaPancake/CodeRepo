@@ -193,6 +193,19 @@ def checkpoint_backend(local, remote, *, repo_id=None, hub=None):
     return Checkpoints(local, remote)
 
 
+def forward_paper_progress(path: Path, offset: int) -> int:
+    """Forward complete progress log lines without duplicating partial lines."""
+    with path.open("rb") as console:
+        console.seek(offset)
+        while True:
+            start = console.tell()
+            line = console.readline()
+            if not line or not line.endswith(b"\n"):
+                return start
+            if b"PAPER_PROGRESS " in line:
+                print(line.decode("utf-8", errors="replace").rstrip(), flush=True)
+
+
 def run_child(payload: dict) -> None:
     from src.run_pipeline import run
 
@@ -499,10 +512,13 @@ def run_benchmark(
                     stdout=console,
                     stderr=subprocess.STDOUT,
                 )
+            console_offset = 0
             try:
                 while child.poll() is None:
                     measurements.check()
+                    console_offset = forward_paper_progress(prof / "console.log", console_offset)
                     time.sleep(1)
+                forward_paper_progress(prof / "console.log", console_offset)
             except BaseException:
                 # Stop the entire profiler/crawler process tree before checkpointing.
                 try:
