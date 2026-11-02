@@ -8,6 +8,17 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize(
+    "name", ["arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"]
+)
+def test_checkout_adds_repo_to_python_path(name):
+    cells = json.loads(
+        (Path(__file__).parents[1] / "notebooks" / name).read_text(encoding="utf-8")
+    )["cells"]
+    source = "".join(next(c for c in cells if c.get("id") == "checkout-revision")["source"])
+    assert "sys.path.insert(0, str(repo_dir))" in source
+
+
 def test_single_notebook_has_safe_smoke_defaults_and_no_outputs():
     folder = Path(__file__).parents[1] / "notebooks"
     path = folder / "arxiv_nhom1_crawl_benchmark.ipynb"
