@@ -1,0 +1,26 @@
+import json
+from pathlib import Path
+
+
+def read(name):
+    return json.loads((Path(__file__).parents[1] / "notebooks" / name).read_text(encoding="utf-8"))
+
+
+def test_original_has_source_toggle_but_no_s3_preparation():
+    cells = read("arxiv_nhom1_crawl_benchmark.ipynb")["cells"]
+    src = "\n".join("".join(c["source"]) for c in cells)
+    assert 'SOURCE_MODE = "arxiv"' in src
+    assert '"s3"' in src
+    assert not any(c.get("id") == "s3-prepare-run" for c in cells)
+    assert "source_mode=SOURCE_MODE" in src
+
+
+def test_hybrid_notebook_partitions_before_planning_and_requires_explicit_crawl():
+    cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
+    src = "\n".join("".join(c["source"]) for c in cells)
+    assert "partition_snapshot(" in src
+    assert "partition.only_v1" in src
+    assert "S3_DOWNLOAD = False" in src
+    assert 'source_mode="arxiv_s3"' in src
+    assert "RUN_CRAWL = False" in src
+    assert src.index("partition_snapshot(") < src.index("select_bundles(")
