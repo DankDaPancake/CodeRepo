@@ -24,3 +24,11 @@ def test_hybrid_notebook_partitions_before_planning_and_requires_explicit_crawl(
     assert 'source_mode="arxiv_s3"' in src
     assert "RUN_CRAWL = False" in src
     assert src.index("partition_snapshot(") < src.index("select_bundles(")
+
+
+def test_hybrid_uses_existing_bulk_and_manifest():
+    cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
+    src = "\n".join("".join(c["source"]) for c in cells)
+    assert '/content/drive/MyDrive/arxiv-s3/packages' in src
+    assert '/content/drive/MyDrive/arxiv-s3/runs/20261102-135934/manifest.xml' in src
+    assert 's3_bundle_dir=str(S3_BUNDLE_DIR)' in src
