@@ -147,7 +147,7 @@ class PaperProgress:
         if paper in self.complete or not self._complete(paper):
             return
         self.complete.add(paper)
-        if len(self.complete) % 10 == 0:
+        if len(self.complete) % 10 == 0 or len(self.complete) == len(self.found):
             log.info(
                 "PAPER_PROGRESS source_terminal=%d/%d discovered papers in chunk; "
                 "includes no_tex/unavailable; references separate",

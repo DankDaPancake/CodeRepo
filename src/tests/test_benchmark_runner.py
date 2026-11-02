@@ -256,6 +256,32 @@ def test_checkpoint_survives_kill_and_ignores_stray_upload(tmp_path):
     assert not (restored / "data/corpus/2604-20535/v1/main.tex.tmp-deadbeef").exists()
 
 
+def test_checkpoint_snapshots_live_profiler_output(tmp_path, monkeypatch):
+    from src.benchmark import checkpoints
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    seed_version(local)
+    live = local / "work/profile/bench/console.log"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"first\n")
+    original = checkpoints.digest
+    changed = False
+
+    def digest_while_profiler_writes(path):
+        nonlocal changed
+        result = original(path)
+        if not changed and Path(path).read_bytes() == b"first\n":
+            live.write_bytes(b"first\nsecond\n")
+            changed = True
+        return result
+
+    monkeypatch.setattr(checkpoints, "digest", digest_while_profiler_writes)
+    Checkpoints(local, remote).save(["2604.20535"])
+    assert changed
+    assert (remote / "work/profile/bench/console.log").read_text() == "first\n"
+    Checkpoints(tmp_path / "restored", remote).restore()
+
+
 def test_failed_version_is_not_committed_and_corruption_is_detected(tmp_path):
     local, remote = tmp_path / "local", tmp_path / "remote"
     paper = seed_version(local)

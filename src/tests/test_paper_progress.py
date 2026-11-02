@@ -28,9 +28,11 @@ def test_progress_counts_only_papers_with_all_versions_and_handles_resume(tmp_pa
     assert "PAPER_PROGRESS source_terminal=20/21" in caplog.text
     resumed = PaperProgress(found, state, tmp_path)
     with caplog.at_level("INFO"):
-        record(21, 1)
+        (tmp_path / "21" / "v1").mkdir(parents=True)
+        state[("21", 1)] = {"arxiv_id": "21", "version": 1, "status": "ok"}
         resumed.record("21")
-    assert caplog.text.count("PAPER_PROGRESS") == 2
+    assert caplog.text.count("PAPER_PROGRESS") == 3
+    assert "source_terminal=21/21" in caplog.text
 
 
 def test_forward_only_complete_progress_lines(tmp_path, capsys):
@@ -46,3 +48,17 @@ def test_forward_only_complete_progress_lines(tmp_path, capsys):
     assert "source_terminal=20/100" in capsys.readouterr().out
     assert forward_paper_progress(path, offset) == offset
     assert capsys.readouterr().out == ""
+
+
+def test_progress_reports_final_partial_group(tmp_path, caplog):
+    found = {str(i): 1 for i in range(27)}
+    state = {}
+    progress = PaperProgress(found, state, tmp_path)
+    with caplog.at_level("INFO"):
+        for paper in found:
+            (tmp_path / paper / "v1").mkdir(parents=True)
+            state[(paper, 1)] = {"arxiv_id": paper, "version": 1, "status": "ok"}
+            progress.record(paper)
+    assert "source_terminal=10/27" in caplog.text
+    assert "source_terminal=20/27" in caplog.text
+    assert "source_terminal=27/27" in caplog.text
