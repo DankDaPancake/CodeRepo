@@ -29,6 +29,13 @@ def test_hybrid_notebook_partitions_before_planning_and_requires_explicit_crawl(
 def test_hybrid_uses_existing_bulk_and_manifest():
     cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
     src = "\n".join("".join(c["source"]) for c in cells)
-    assert '/content/drive/MyDrive/arxiv-s3/packages' in src
-    assert '/content/drive/MyDrive/arxiv-s3/runs/20261102-135934/manifest.xml' in src
-    assert 's3_bundle_dir=str(S3_BUNDLE_DIR)' in src
+    assert "/content/drive/MyDrive/arxiv-s3/packages" in src
+    assert "/content/drive/MyDrive/arxiv-s3/runs/20261102-135934/manifest.xml" in src
+    assert "s3_bundle_dir=str(S3_BUNDLE_DIR)" in src
+
+
+def test_hybrid_missing_bundle_goes_to_arxiv_fallback():
+    cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
+    source = "".join(next(c for c in cells if c.get("id") == "3e980f1a")["source"])
+    assert "missing bundles will use arXiv fallback" in source
+    assert "raise FileNotFoundError" not in source
