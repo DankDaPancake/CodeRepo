@@ -77,22 +77,39 @@ def order_hybrid_chunks(chunks, partition):
 
 def prepare_s3_index(manifest_path: Path, directory: Path, ids: list[str]) -> dict:
     """Verify candidate bundles and index source members before the first S3 phase."""
-    from src.crawler.s3_prepare import parse_manifest, select_bundles
+    import tarfile
+
+    from src.crawler.s3_prepare import _id, parse_manifest, select_bundles
     from src.crawler.s3_sources import index_verified_bundle
 
     bundles, _ = select_bundles(parse_manifest(manifest_path.read_bytes()), ids)
     index = {}
+    errors = {}
     for bundle in bundles:
         path = directory / Path(bundle.key).name
+        candidates = {pid for pid in ids if _id(bundle.first) <= _id(pid) <= _id(bundle.last)}
         if not path.is_file():
             print(f"S3 bundle missing; eligible IDs will fall back: {path.name}", flush=True)
+            for pid in candidates:
+                errors[pid] = {
+                    "status": "bundle_error",
+                    "reason": "bundle_missing",
+                    "bundle": bundle.key,
+                }
             continue
-        found = index_verified_bundle(path, bundle, set(ids))
-        if set(found) & set(index):
-            raise ValueError("Duplicate paper across S3 bundles")
+        try:
+            found = index_verified_bundle(path, bundle, set(ids))
+        except (OSError, ValueError, tarfile.TarError) as exc:
+            print(f"S3 bundle failed; eligible IDs will fall back: {bundle.key}: {exc}", flush=True)
+            for pid in candidates:
+                errors[pid] = {"status": "bundle_error", "reason": str(exc), "bundle": bundle.key}
+            continue
+        for pid in set(found) & set(index):
+            errors[pid] = {"status": "bundle_error", "reason": "duplicate paper across bundles"}
         for entry in found.values():
             entry.update(path=str(path), bundle_timestamp=bundle.timestamp)
         index.update(found)
+    index.update(errors)
     for pid in set(ids) - index.keys():
         index[pid] = {"status": "source_missing"}
     return index

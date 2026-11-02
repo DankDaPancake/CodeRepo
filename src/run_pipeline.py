@@ -553,6 +553,8 @@ def run(
                 try:
                     if entry is None or entry.get("status") == "source_missing":
                         raise ValueError("source_missing")
+                    if entry.get("status") == "bundle_error":
+                        raise ValueError(f"bundle_error: {entry.get('reason', 'unknown')}")
                     if version != 1 or found[arxiv_id] != 1:
                         raise ValueError("version_unverified")
                     rec.update(

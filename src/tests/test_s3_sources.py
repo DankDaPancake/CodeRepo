@@ -2,6 +2,8 @@ import hashlib
 import io
 import tarfile
 
+import pytest
+
 from src.crawler.s3_prepare import Bundle
 from src.crawler.s3_sources import index_verified_bundle
 
@@ -39,6 +41,31 @@ def test_index_accepts_matching_md5_with_different_manifest_size(tmp_path):
         "",
     )
     assert "2604.20535" in index_verified_bundle(path, bundle, {"2604.20535"})
+
+
+def test_explicit_v2_member_never_inferred_as_v1(tmp_path):
+    from src.crawler.s3_sources import extract_inferred_v1
+
+    path = tmp_path / "arXiv_src_2604_001.tar"
+    with tarfile.open(path, "w") as tar:
+        data = b"\\documentclass{article}"
+        member = tarfile.TarInfo("2604.20535v2.tex")
+        member.size = len(data)
+        tar.addfile(member, io.BytesIO(data))
+    bundle = Bundle(
+        "src/" + path.name,
+        "2604.20535",
+        "2604.20535",
+        path.stat().st_size,
+        hashlib.md5(path.read_bytes()).hexdigest(),
+        "2026-05-05 00:00:00",
+    )
+    entry = index_verified_bundle(path, bundle, {"2604.20535"})["2604.20535"]
+    with pytest.raises(ValueError, match="version"):
+        extract_inferred_v1(
+            path, entry, tmp_path / "v1", ["2026-04-20T00:00:00Z"], bundle.timestamp
+        )
+    assert not (tmp_path / "v1").exists()
 
 
 def test_duplicate_member_is_not_selected(tmp_path):

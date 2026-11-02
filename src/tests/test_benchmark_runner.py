@@ -37,7 +37,23 @@ def test_s3_modes_require_snapshot_manifest_and_bundle_directory(tmp_path):
         plan_chunks(BenchmarkConfig("test", "sample", ("dang",), count=1, source_mode="s3"))
 
 
-def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatch):
+def test_s3_index_records_corrupt_bundle_for_fallback(tmp_path):
+    from src.benchmark.runner import prepare_s3_index
+
+    manifest = tmp_path / "manifest.xml"
+    manifest.write_text("""<arXivSRC><file><filename>src/arXiv_src_2604_001.tar</filename>
+        <first_item>2604.20535</first_item><last_item>2604.20536</last_item>
+        <size>4</size><md5sum>8d777f385d3dfec8815d20f7496026dc</md5sum>
+        <timestamp>2026-05-01 00:00:00</timestamp></file></arXivSRC>""")
+    (tmp_path / "arXiv_src_2604_001.tar").write_bytes(b"bad!")
+    result = prepare_s3_index(manifest, tmp_path, ["2604.20535", "2604.20536"])
+    assert result["2604.20535"]["status"] == "bundle_error"
+    assert result["2604.20536"]["status"] == "bundle_error"
+    assert "checksum" in result["2604.20535"]["reason"].lower()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatch, corrupt):
     import hashlib
     import io
     import tarfile
@@ -61,6 +77,8 @@ def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatc
         <first_item>2604.20535</first_item><last_item>2604.20537</last_item>
         <size>{bundle_path.stat().st_size}</size><md5sum>{hashlib.md5(bundle_path.read_bytes()).hexdigest()}</md5sum>
         <timestamp>2026-04-05 00:00:00</timestamp></file></arXivSRC>""")
+    if corrupt:
+        bundle_path.write_bytes(b"corrupt bundle")
     snapshot_path = tmp_path / "snapshot.jsonl"
     records = []
     for pid, count in [("2604.20535", 1), ("2604.20536", 1), ("2604.20537", 2)]:
@@ -131,7 +149,7 @@ def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatc
     ]
     assert result["complete"]
     assert result["timing_complete"]
-    assert "2604.20535v1" not in fake.downloads
+    assert ("2604.20535v1" in fake.downloads) is corrupt
     assert "2604.20536v1" in fake.downloads
     assert set(fake.downloads) >= {"2604.20537v1", "2604.20537v2"}
 

@@ -23,7 +23,7 @@ def index_verified_bundle(path: Path, bundle: Bundle, ids: set[str]) -> dict[str
             member = PurePosixPath(item.name)
             if not item.isfile() or member.is_absolute() or ".." in member.parts:
                 continue
-            match = re.fullmatch(r"(\d{4}\.\d{4,5})(?:v\d+)?(?:\.[a-zA-Z0-9]+)*", member.name)
+            match = re.fullmatch(r"(\d{4}\.\d{4,5})(?:v(\d+))?(?:\.[a-zA-Z0-9]+)*", member.name)
             if not match or match[1] not in ids:
                 continue
             pid = match[1]
@@ -34,6 +34,7 @@ def index_verified_bundle(path: Path, bundle: Bundle, ids: set[str]) -> dict[str
                 "bundle": bundle.key,
                 "bundle_md5": bundle.md5,
                 "member": item.name,
+                "explicit_version": int(match[2]) if match[2] else None,
                 "offset": item.offset_data,
                 "size": item.size,
                 "file_size": path.stat().st_size,
@@ -75,6 +76,8 @@ def extract_inferred_v1(
     path: Path, entry: dict, destination: Path, dates: list[str], timestamp: str
 ):
     """Extract an inferred v1; the caller records the snapshot and bundle identities."""
+    if entry.get("explicit_version") not in (None, 1):
+        raise ValueError("Explicit member version conflicts with v1")
     if not infer_v1(dates, timestamp):
         raise ValueError("Cannot infer v1 from snapshot and bundle timestamp")
     stat = path.stat()
