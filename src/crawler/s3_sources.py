@@ -16,7 +16,7 @@ from src.crawler.s3_prepare import Bundle, _verify
 def index_verified_bundle(path: Path, bundle: Bundle, ids: set[str]) -> dict[str, dict]:
     """Index target members after verifying the outer tar; version remains unverified."""
     if not _verify(path, bundle):
-        raise ValueError(f"Bundle checksum/size mismatch: {bundle.key}")
+        raise ValueError(f"Bundle checksum mismatch: {bundle.key}")
     found: dict[str, dict] = {}
     with tarfile.open(path, "r:") as archive:
         for item in archive:

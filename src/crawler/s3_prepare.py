@@ -85,7 +85,7 @@ def select_bundles(bundles: list[Bundle], ids: list[str]) -> tuple[list[Bundle],
 
 
 def _verify(path: Path, bundle: Bundle) -> bool:
-    if not path.is_file() or path.stat().st_size != bundle.size:
+    if not path.is_file():
         return False
     digest = hashlib.md5()  # arXiv manifest provides MD5, not a security signature
     with path.open("rb") as f:
@@ -101,7 +101,8 @@ def download_bundle(s3, bundle: Bundle, directory: Path) -> dict:
         return {
             "key": bundle.key,
             "status": "reused",
-            "bytes": bundle.size,
+            "bytes": target.stat().st_size,
+            "manifest_bytes": bundle.size,
             "md5": bundle.md5,
             "seconds": 0.0,
         }
@@ -117,14 +118,15 @@ def download_bundle(s3, bundle: Bundle, directory: Path) -> dict:
             while chunk := body.read(8 * 1024 * 1024):
                 out.write(chunk)
         if not _verify(temporary, bundle):
-            raise ValueError(f"Bundle size/checksum mismatch: {bundle.key}")
+            raise ValueError(f"Bundle checksum mismatch: {bundle.key}")
         os.replace(temporary, target)
     finally:
         body.close()
     return {
         "key": bundle.key,
         "status": "downloaded",
-        "bytes": bundle.size,
+        "bytes": target.stat().st_size,
+        "manifest_bytes": bundle.size,
         "md5": bundle.md5,
         "seconds": round(time.perf_counter() - started, 3),
     }

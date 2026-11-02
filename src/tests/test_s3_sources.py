@@ -24,6 +24,23 @@ def test_index_marks_unversioned_member_unverified_and_rejects_bad_bundle(tmp_pa
         index_verified_bundle(path, bundle, {"2604.20535"})
 
 
+def test_index_accepts_matching_md5_with_different_manifest_size(tmp_path):
+    path = tmp_path / "arXiv_src_2604_001.tar"
+    with tarfile.open(path, "w") as tar:
+        member = tarfile.TarInfo("2604.20535.gz")
+        member.size = 4
+        tar.addfile(member, io.BytesIO(b"data"))
+    bundle = Bundle(
+        "src/" + path.name,
+        "2604.20535",
+        "2604.20535",
+        4,
+        hashlib.md5(path.read_bytes()).hexdigest(),
+        "",
+    )
+    assert "2604.20535" in index_verified_bundle(path, bundle, {"2604.20535"})
+
+
 def test_duplicate_member_is_not_selected(tmp_path):
     path = tmp_path / "arXiv_src_2604_001.tar"
     with tarfile.open(path, "w") as tar:

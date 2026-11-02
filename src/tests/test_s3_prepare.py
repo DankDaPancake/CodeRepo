@@ -40,6 +40,31 @@ def test_download_verifies_before_publish_and_reuses_verified_file(tmp_path):
     assert s3.calls == 1
 
 
+def test_matching_md5_allows_different_manifest_size_and_reports_actual_size(tmp_path):
+    data = b"tar bytes including headers and padding"
+    bundle = parse_manifest(manifest(data).replace(str(len(data)).encode(), b"7", 1))[0]
+    target = tmp_path / "arXiv_src_2604_001.tar"
+    target.write_bytes(data)
+    result = download_bundle(None, bundle, tmp_path)
+    assert result["status"] == "reused"
+    assert result["bytes"] == len(data)
+    assert result["manifest_bytes"] == 7
+
+
+def test_download_with_different_manifest_size_checks_md5(tmp_path):
+    data = b"tar bytes including headers and padding"
+    bundle = parse_manifest(manifest(data).replace(str(len(data)).encode(), b"7", 1))[0]
+
+    class S3:
+        def get_object(self, **kwargs):
+            return {"Body": io.BytesIO(data)}
+
+    result = download_bundle(S3(), bundle, tmp_path)
+    assert result["status"] == "downloaded"
+    assert result["bytes"] == len(data)
+    assert result["manifest_bytes"] == 7
+
+
 def test_bad_checksum_is_not_published(tmp_path):
     bundle = parse_manifest(manifest())[0]
 
