@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import tempfile
 import time
 import uuid
 from datetime import UTC, datetime
@@ -163,32 +164,40 @@ class Checkpoints:
             (self.remote / rel).mkdir(parents=True, exist_ok=True)
         files = dict(self.hashes)
         copied_bytes = 0
-        for name, path in candidates.items():
-            if name.startswith("data/") and name.endswith(".json"):
+        with tempfile.TemporaryDirectory(prefix="arxiv-checkpoint-") as staging_dir:
+            staging = Path(staging_dir)
+            for name, path in candidates.items():
+                if name.startswith("work/"):
+                    # The profiler can append while a checkpoint is uploading. Hash and
+                    # upload the same frozen local copy, never the live file twice.
+                    frozen = staging / uuid.uuid4().hex
+                    shutil.copyfile(path, frozen)
+                    path = frozen
+                if name.startswith("data/") and name.endswith(".json"):
+                    try:
+                        json.loads(path.read_bytes())
+                    except ValueError:
+                        continue  # torn metadata/references write; retry at the next checkpoint
+                sha = digest(path)
+                if self.hashes.get(name) == sha and name not in self.repairs:
+                    files[name] = sha
+                    continue
+                destination = self.remote / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                old_sha = self.hashes.get(name)
+                if old_sha and old_sha != sha:
+                    self._preserve_previous(destination, old_sha)
+                tmp = destination.parent / f"{destination.name}.tmp-{uuid.uuid4().hex[:8]}"
                 try:
-                    json.loads(path.read_bytes())
-                except ValueError:
-                    continue  # torn metadata/references write; retry at the next checkpoint
-            sha = digest(path)
-            if self.hashes.get(name) == sha and name not in self.repairs:
+                    shutil.copyfile(path, tmp)
+                    if not self._verify(tmp, sha):
+                        raise OSError(f"Drive checkpoint verification failed: {name}")
+                    tmp.replace(destination)
+                finally:
+                    tmp.unlink(missing_ok=True)
                 files[name] = sha
-                continue
-            destination = self.remote / name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            old_sha = self.hashes.get(name)
-            if old_sha and old_sha != sha:
-                self._preserve_previous(destination, old_sha)
-            tmp = destination.parent / f"{destination.name}.tmp-{uuid.uuid4().hex[:8]}"
-            try:
-                shutil.copyfile(path, tmp)
-                if not self._verify(tmp, sha):
-                    raise OSError(f"Drive checkpoint verification failed: {name}")
-                tmp.replace(destination)
-            finally:
-                tmp.unlink(missing_ok=True)
-            files[name] = sha
-            self.repairs.discard(name)
-            copied_bytes += path.stat().st_size
+                self.repairs.discard(name)
+                copied_bytes += path.stat().st_size
         generation = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8]
         rec = dict(
             generation=generation,

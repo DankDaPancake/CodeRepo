@@ -46,6 +46,9 @@ class BenchmarkConfig:
     chunk_attempts: int = 3  # tries per chunk before it is recorded as incomplete
     chunk_cooldown_s: float = 300.0  # wait before try k+1 is k x this (arXiv 429 windows)
     adaptive_pacing: bool = False  # spec 0004: slow the pace after HTTP 429
+    source_mode: str = "arxiv"
+    s3_manifest: str | None = None
+    s3_bundle_dir: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,68 @@ class Chunk:
     ids: tuple[str, ...]
 
 
+def order_hybrid_chunks(chunks, partition):
+    """Order all single-version chunks before any multi-version chunks."""
+    if partition.missing:
+        raise ValueError(f"Snapshot missing or invalid for {len(partition.missing)} IDs")
+    all_ids = [pid for chunk in chunks for pid in chunk.ids]
+    single, multi = set(partition.only_v1), set(partition.multi_version)
+    if single & multi or single | multi != set(all_ids) or len(all_ids) != len(set(all_ids)):
+        raise ValueError("Hybrid partition does not match selected IDs")
+    phases = []
+    for name, selected in (("only_v1", single), ("multi_version", multi)):
+        for chunk in chunks:
+            ids = tuple(pid for pid in chunk.ids if pid in selected)
+            if ids:
+                phases.append((name, Chunk(chunk.owner, chunk.offset, ids)))
+    return phases
+
+
+def prepare_s3_index(manifest_path: Path, directory: Path, ids: list[str]) -> dict:
+    """Verify candidate bundles and index source members before the first S3 phase."""
+    import tarfile
+
+    from src.crawler.s3_prepare import _id, parse_manifest, select_bundles
+    from src.crawler.s3_sources import index_verified_bundle
+
+    bundles, _ = select_bundles(parse_manifest(manifest_path.read_bytes()), ids)
+    index = {}
+    errors = {}
+    for bundle in bundles:
+        path = directory / Path(bundle.key).name
+        candidates = {pid for pid in ids if _id(bundle.first) <= _id(pid) <= _id(bundle.last)}
+        if not path.is_file():
+            print(f"S3 bundle missing; eligible IDs will fall back: {path.name}", flush=True)
+            for pid in candidates:
+                errors[pid] = {
+                    "status": "bundle_error",
+                    "reason": "bundle_missing",
+                    "bundle": bundle.key,
+                }
+            continue
+        try:
+            found = index_verified_bundle(path, bundle, set(ids))
+        except (OSError, ValueError, tarfile.TarError) as exc:
+            print(f"S3 bundle failed; eligible IDs will fall back: {bundle.key}: {exc}", flush=True)
+            for pid in candidates:
+                errors[pid] = {"status": "bundle_error", "reason": str(exc), "bundle": bundle.key}
+            continue
+        for pid in set(found) & set(index):
+            errors[pid] = {"status": "bundle_error", "reason": "duplicate paper across bundles"}
+        for entry in found.values():
+            entry.update(path=str(path), bundle_timestamp=bundle.timestamp)
+        index.update(found)
+    index.update(errors)
+    for pid in set(ids) - index.keys():
+        index[pid] = {"status": "source_missing"}
+    return index
+
+
 def plan_chunks(cfg: BenchmarkConfig) -> list[Chunk]:
+    if cfg.source_mode not in ("arxiv", "s3", "arxiv_s3"):
+        raise ValueError("Invalid source mode")
+    if cfg.source_mode != "arxiv" and not (cfg.snapshot and cfg.s3_manifest and cfg.s3_bundle_dir):
+        raise ValueError("S3 source requires snapshot, manifest and bundle directory")
     if cfg.storage_backend not in ("drive", "huggingface"):
         raise ValueError("Unknown storage backend")
     if cfg.storage_backend == "huggingface" and not cfg.hf_repo_id:
@@ -101,6 +165,8 @@ def prepare_run(cfg: BenchmarkConfig, root: Path, revision: str, *, resume: bool
         from src.crawler.snapshot import sha256
 
         identity["snapshot_sha256"] = sha256(Path(cfg.snapshot))
+    if cfg.source_mode != "arxiv":
+        identity["s3_manifest_sha256"] = sha256(Path(cfg.s3_manifest))
     path = root / cfg.run_id / "MANIFEST.json"
     if resume:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -162,6 +228,11 @@ def coverage(cfg: BenchmarkConfig, local: Path) -> dict:
         papers_with_reference_or_source_errors=len(all_bad),
         complete=not all_bad and len(ids) == len(set(ids)),
         final_complete=cfg.mode == "final" and len(ids) == 20_000 and not all_bad,
+        source_mode=cfg.source_mode,
+        s3_inferred_versions=sum(
+            rec.get("version_evidence") == "inferred_snapshot_bundle_timestamp"
+            for rec in logs.values()
+        ),
     )
     write_json(work / "coverage.json", result)
     return result
@@ -191,6 +262,19 @@ def checkpoint_backend(local, remote, *, repo_id=None, hub=None):
         hub = hub or HubStore(repo_id, remote.parent.parent / ".hf-cache")
         return HFCheckpoints(local, remote, hub, f"runs/{remote.name}")
     return Checkpoints(local, remote)
+
+
+def forward_paper_progress(path: Path, offset: int) -> int:
+    """Forward complete progress log lines without duplicating partial lines."""
+    with path.open("rb") as console:
+        console.seek(offset)
+        while True:
+            start = console.tell()
+            line = console.readline()
+            if not line or not line.endswith(b"\n"):
+                return start
+            if b"PAPER_PROGRESS " in line:
+                print(line.decode("utf-8", errors="replace").rstrip(), flush=True)
 
 
 def run_child(payload: dict) -> None:
@@ -228,6 +312,10 @@ def run_child(payload: dict) -> None:
         label=payload["owner"],
         on_version=checkpoint,
         adaptive_pacing=payload.get("adaptive_pacing", False),
+        source_mode=payload.get("source_mode", "arxiv"),
+        s3_index=json.loads(Path(payload["s3_index"]).read_text(encoding="utf-8"))
+        if payload.get("s3_index")
+        else None,
     )
 
 
@@ -407,6 +495,8 @@ def run_benchmark(
         )
         chunks = plan_chunks(cfg)
         all_ids = [i for c in chunks for i in c.ids]
+        # Establish a recoverable run before scanning the snapshot or large bundles.
+        cp.save([], phase="initial")
         snapshot_index = None
         if cfg.snapshot:
             from src.crawler.snapshot import prepare_snapshot_index
@@ -421,16 +511,52 @@ def run_benchmark(
             )
             write_json(work / f"snapshot_preparation/{session_id}.json", prepared)
             print(f"Snapshot: {prepared['found']}/{len(all_ids)} IDs indexed", flush=True)
-        # Initial durable manifest/session, even if discovery never succeeds.
-        cp.save([], phase="initial")
+        s3_index_path = None
+        phases = [("arxiv", chunk) for chunk in chunks]
+        if cfg.source_mode != "arxiv":
+            from src.crawler.s3_partition import partition_snapshot
+
+            partition = partition_snapshot(snapshot_index, all_ids)
+            if partition.missing:
+                raise ValueError(f"Snapshot missing or invalid for {len(partition.missing)} IDs")
+            s3_targets = partition.only_v1 if cfg.source_mode == "arxiv_s3" else all_ids
+            measurements.phase = "s3-bundle-index"
+            s3_index_path = work / "s3_index.json"
+            s3_started = time.perf_counter()
+            write_json(
+                s3_index_path,
+                prepare_s3_index(Path(cfg.s3_manifest), Path(cfg.s3_bundle_dir), s3_targets),
+            )
+            write_json(
+                work / f"s3_index_sessions/{session_id}.json",
+                {
+                    "seconds": round(time.perf_counter() - s3_started, 3),
+                    "target_ids": len(s3_targets),
+                    "manifest_sha256": manifest["s3_manifest_sha256"],
+                },
+            )
+            if cfg.source_mode == "arxiv_s3":
+                ordered = order_hybrid_chunks(chunks, partition)
+                singles = [chunk for name, chunk in ordered if name == "only_v1"]
+                multis = [chunk for name, chunk in ordered if name == "multi_version"]
+                phases = (
+                    [("s3", chunk) for chunk in singles]
+                    + [("fallback", chunk) for chunk in singles]
+                    + [("multi_version", chunk) for chunk in multis]
+                )
+            else:
+                phases = [("s3", chunk) for chunk in chunks]
         last_exit = None
         # A chunk that stays incomplete (arXiv 429 beyond the retry budget) is retried after
         # a cooldown, then recorded and skipped: one stubborn version must not stop the run.
-        queue = deque((c, 1) for c in chunks)
+        queue = deque((phase, chunk, 1) for phase, chunk in phases)
         while queue:
-            chunk, tries = queue.popleft()
+            phase, chunk, tries = queue.popleft()
             measurements.check()
-            if _chunk_complete(chunk, local, cfg.references):
+            phase_references = cfg.references and not (
+                phase == "s3" and cfg.source_mode == "arxiv_s3"
+            )
+            if _chunk_complete(chunk, local, phase_references):
                 print(f"Verified complete: {chunk.owner} {chunk.offset}", flush=True)
                 continue
             if last_exit is not None:
@@ -444,10 +570,12 @@ def run_benchmark(
                 local=str(local),
                 remote=str(remote),
                 checkpoint_s=cfg.checkpoint_s,
-                references=cfg.references,
+                references=phase_references,
                 snapshot=str(snapshot_index) if snapshot_index else None,
                 hf_repo_id=cfg.hf_repo_id if hub else None,
                 adaptive_pacing=cfg.adaptive_pacing,
+                source_mode="s3" if phase == "s3" else "arxiv",
+                s3_index=str(s3_index_path) if phase == "s3" else None,
             )
             payload_path = work / "chunk.json"
             write_json(payload_path, payload)
@@ -457,6 +585,7 @@ def run_benchmark(
                     attempt=attempt,
                     owner=chunk.owner,
                     ids=list(chunk.ids),
+                    phase=phase,
                     planned_at=datetime.now(UTC).isoformat(),
                     state="launch-intent",
                 ),
@@ -490,7 +619,10 @@ def run_benchmark(
             ]
             if Path("/usr/bin/time").is_file():
                 cmd = ["/usr/bin/time", "-v", "-o", str(prof / "time_v.log"), *cmd]
-            print(f"=== {chunk.owner} offset={chunk.offset} IDs={len(chunk.ids)} ===", flush=True)
+            print(
+                f"=== {phase} {chunk.owner} offset={chunk.offset} IDs={len(chunk.ids)} ===",
+                flush=True,
+            )
             measurements.phase = "crawl-chunk"
             with (prof / "console.log").open("wb") as console:
                 child = subprocess.Popen(
@@ -499,10 +631,13 @@ def run_benchmark(
                     stdout=console,
                     stderr=subprocess.STDOUT,
                 )
+            console_offset = 0
             try:
                 while child.poll() is None:
                     measurements.check()
+                    console_offset = forward_paper_progress(prof / "console.log", console_offset)
                     time.sleep(1)
+                forward_paper_progress(prof / "console.log", console_offset)
             except BaseException:
                 # Stop the entire profiler/crawler process tree before checkpointing.
                 try:
@@ -558,7 +693,13 @@ def run_benchmark(
                 raise RuntimeError(
                     f"Chunk exit {code}; inspect {prof / 'console.log'} and work/run.log"
                 )
-            if not _chunk_complete(chunk, local, cfg.references):
+            if phase == "s3" and cfg.source_mode == "arxiv_s3":
+                continue  # fallback phase handles missing/unverified sources
+            if not _chunk_complete(chunk, local, phase_references):
+                if phase == "s3":
+                    incomplete.append(dict(owner=chunk.owner, offset=chunk.offset, tries=tries))
+                    print("S3 source missing or unverified; recorded and continuing", flush=True)
+                    continue
                 if tries < cfg.chunk_attempts:
                     wait = cfg.chunk_cooldown_s * tries
                     print(
@@ -568,7 +709,7 @@ def run_benchmark(
                     )
                     measurements.phase = "cooldown"
                     _cooldown(measurements, wait)
-                    queue.appendleft((chunk, tries + 1))
+                    queue.appendleft((phase, chunk, tries + 1))
                 else:
                     incomplete.append(dict(owner=chunk.owner, offset=chunk.offset, tries=tries))
                     print(

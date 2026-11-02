@@ -23,6 +23,77 @@ VERSIONS = {"2606.00001": 1, "2606.00002": 2, "2606.00003": 1}  # 2606.00003 is 
 IDS = list(VERSIONS)
 
 
+def test_s3_only_missing_source_records_failure_without_arxiv(tmp_path):
+    import json
+
+    from src.tests.test_snapshot_discovery import snapshot
+
+    def forbidden(url):
+        pytest.fail(f"unexpected network: {url}")
+
+    result = run(
+        ["2606.00001"],
+        data_root=tmp_path / "data",
+        work_dir=tmp_path / "work",
+        client=client_for(forbidden),
+        snapshot=snapshot(tmp_path),
+        references=False,
+        progress=False,
+        source_mode="s3",
+        s3_index={},
+    )
+    record = json.loads((tmp_path / "work/versions.jsonl").read_text())
+    assert record["status"] == "failed"
+    assert record["reason"] == "source_missing"
+    assert result["papers_complete"] == 0
+
+
+def test_s3_only_inferred_v1_extracts_source_without_arxiv(tmp_path):
+    import hashlib
+    import io
+    import tarfile
+
+    from src.crawler.s3_prepare import Bundle
+    from src.crawler.s3_sources import index_verified_bundle
+    from src.tests.test_snapshot_discovery import snapshot
+
+    content = b"\\documentclass{article}\\begin{document}Hello\\end{document}"
+    path = tmp_path / "bundle.tar"
+    with tarfile.open(path, "w") as tar:
+        member = tarfile.TarInfo("2606.00001.tex")
+        member.size = len(content)
+        tar.addfile(member, io.BytesIO(content))
+    bundle = Bundle(
+        "src/arXiv_src_2606_001.tar",
+        "2606.00001",
+        "2606.00001",
+        path.stat().st_size,
+        hashlib.md5(path.read_bytes()).hexdigest(),
+        "2026-06-03 00:00:00",
+    )
+    entry = index_verified_bundle(path, bundle, {"2606.00001"})["2606.00001"]
+    entry.update(path=str(path), bundle_timestamp=bundle.timestamp)
+
+    def forbidden(url):
+        pytest.fail(f"unexpected network: {url}")
+
+    result = run(
+        ["2606.00001"],
+        data_root=tmp_path / "data",
+        work_dir=tmp_path / "work",
+        client=client_for(forbidden),
+        snapshot=snapshot(tmp_path),
+        references=False,
+        progress=False,
+        source_mode="s3",
+        s3_index={"2606.00001": entry},
+    )
+    record = json.loads((tmp_path / "work/versions.jsonl").read_text())
+    assert record["version_evidence"] == "inferred_snapshot_bundle_timestamp"
+    assert result["papers_complete"] == 1
+    assert (tmp_path / "data/2606-00001/v1/2606.00001.tex").read_bytes() == content
+
+
 class FakeArxiv:
     """Answers API and /src/ requests; can simulate a kill or a broken version."""
 

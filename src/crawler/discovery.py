@@ -294,6 +294,7 @@ def discover(
     data_root: Path,
     *,
     snapshot: Path | None = None,
+    snapshot_only: bool = False,
     refresh: bool = False,
     journal: Callable[[dict], None] | None = None,
 ) -> DiscoveryResult:
@@ -302,6 +303,8 @@ def discover(
     IDs that already have a valid metadata.json are skipped unless ``refresh``.
     ``journal`` receives one status dict per ID (written to discovery.jsonl by the pipeline).
     """
+    if snapshot_only and snapshot is None:
+        raise ValueError("snapshot_only requires a snapshot")
     start = time.perf_counter()
     result = DiscoveryResult()
     note = journal or (lambda _rec: None)
@@ -337,7 +340,9 @@ def discover(
     }
     refused: set[str] = set()
     for attempt in (1, 2):
-        pending = [i for i in todo if i not in entries and i not in refused]
+        pending = (
+            [] if snapshot_only else [i for i in todo if i not in entries and i not in refused]
+        )
         for batch in _batches(pending, config.ARXIV_API_BATCH):
             try:
                 entries.update((e.arxiv_id, e) for e in api_query(client, batch))
@@ -367,7 +372,11 @@ def discover(
         dates[arxiv_id] = d
         per_version[arxiv_id] = {e.version: e}
 
-    needed = [f"{i}v{k}" for i, e in entries.items() for k in range(1, e.version)]
+    needed = (
+        []
+        if snapshot_only
+        else [f"{i}v{k}" for i, e in entries.items() for k in range(1, e.version)]
+    )
     for batch in _batches(needed, config.ARXIV_API_BATCH):
         try:
             for e in api_query(client, batch):
@@ -388,7 +397,8 @@ def discover(
     # 3. OAI-PMH fallback: IDs the API missed and papers with incomplete version history.
     oai: dict[str, dict] = {}
     incomplete = [i for i, e in entries.items() if len(dates[i]) != e.version]
-    for arxiv_id in [i for i in todo if i not in entries] + incomplete:
+    oai_needed = [] if snapshot_only else [i for i in todo if i not in entries] + incomplete
+    for arxiv_id in oai_needed:
         result.oai_fallbacks += 1
         try:
             rec = oai_get_record(client, arxiv_id)
@@ -432,7 +442,9 @@ def discover(
             )
             n = max(versions) if versions else 0
         else:
-            reason = result.missing.setdefault(arxiv_id, "not_found")
+            reason = result.missing.setdefault(
+                arxiv_id, "snapshot_missing" if snapshot_only else "not_found"
+            )
             note({"arxiv_id": arxiv_id, "status": "missing", "reason": reason})
             continue
 

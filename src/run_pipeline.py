@@ -37,6 +37,7 @@ import logging
 import os
 import shutil
 import sys
+import tarfile
 import threading
 import time
 from collections import Counter
@@ -127,6 +128,32 @@ def is_done(rec: dict | None, data_root: Path) -> bool:
         and rec.get("status") in FINAL_STATUSES
         and version_dir(data_root, rec["arxiv_id"], rec["version"]).is_dir()
     )
+
+
+class PaperProgress:
+    """Report source completion in this chunk; references are tracked separately."""
+
+    def __init__(self, found, state, data_root):
+        self.found, self.state, self.data_root = found, state, data_root
+        self.complete = {paper for paper in found if self._complete(paper)}
+
+    def _complete(self, paper):
+        return bool(self.found.get(paper)) and all(
+            is_done(self.state.get((paper, v)), self.data_root)
+            for v in range(1, self.found[paper] + 1)
+        )
+
+    def record(self, paper):
+        if paper in self.complete or not self._complete(paper):
+            return
+        self.complete.add(paper)
+        if len(self.complete) % 10 == 0 or len(self.complete) == len(self.found):
+            log.info(
+                "PAPER_PROGRESS source_terminal=%d/%d discovered papers in chunk; "
+                "includes no_tex/unavailable; references separate",
+                len(self.complete),
+                len(self.found),
+            )
 
 
 def _publish_parser_job(
@@ -417,8 +444,14 @@ def run(
     scheduler: AdaptiveBatchScheduler | None = None,
     on_version: Callable[[dict], None] | None = None,
     adaptive_pacing: bool = False,
+    source_mode: str = "arxiv",
+    s3_index: dict | None = None,
 ) -> dict:
     """Discover ``ids``, then download and extract every version not done yet."""
+    if source_mode not in ("arxiv", "s3"):
+        raise ValueError("Unknown source mode")
+    if source_mode == "s3" and (snapshot is None or job_queue is not None):
+        raise ValueError("S3 mode requires a snapshot and non-queue execution")
     if scheduler is not None and job_queue is not None:
         if on_version is not None:
             raise ValueError("Version checkpoint callback requires non-queue benchmark mode")
@@ -471,6 +504,7 @@ def run(
                 client,
                 data_root,
                 snapshot=snapshot,
+                snapshot_only=source_mode == "s3",
                 refresh=refresh_metadata,
                 journal=disc_log.write,
             )
@@ -485,6 +519,7 @@ def run(
             if not is_done(state.get((i, v)), data_root)
         ]
         paper_times.discovered(found, missing, todo)
+        paper_progress = PaperProgress(found, state, data_root)
         ref_thread = (
             _start_references(
                 [i for i in ids if i in found], data_root, on_record=paper_times.reference
@@ -506,17 +541,60 @@ def run(
         bar = tqdm(total=len(todo), unit="ver", disable=not progress, dynamic_ncols=True)
         loop_start = time.perf_counter()
         for k, (arxiv_id, version) in enumerate(todo, 1):
-            rec = process_version(
-                client,
-                arxiv_id,
-                version,
-                data_root=data_root,
-                keep_extensions=keep_extensions,
-                archive_dir=archive_dir,
-            )
+            if source_mode == "s3":
+                from src.crawler.discovery import read_metadata
+                from src.crawler.extract import CorruptArchiveError
+                from src.crawler.s3_sources import extract_inferred_v1
+
+                start_version = time.perf_counter()
+                entry = (s3_index or {}).get(arxiv_id)
+                meta = read_metadata(data_root, arxiv_id)
+                rec = {"arxiv_id": arxiv_id, "version": version, "source": "s3"}
+                try:
+                    if entry is None or entry.get("status") == "source_missing":
+                        raise ValueError("source_missing")
+                    if entry.get("status") == "bundle_error":
+                        raise ValueError(f"bundle_error: {entry.get('reason', 'unknown')}")
+                    if version != 1 or found[arxiv_id] != 1:
+                        raise ValueError("version_unverified")
+                    rec.update(
+                        extract_inferred_v1(
+                            Path(entry["path"]),
+                            entry,
+                            version_dir(data_root, arxiv_id, version),
+                            [meta["submission_date"]],
+                            entry["bundle_timestamp"],
+                        )
+                    )
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    tarfile.TarError,
+                    CorruptArchiveError,
+                ) as exc:
+                    shutil.rmtree(version_dir(data_root, arxiv_id, version), ignore_errors=True)
+                    reason = str(exc)
+                    rec.update(status="failed", stage="s3", reason=reason)
+                rec["total_s"] = _since(start_version)
+            else:
+                rec = process_version(
+                    client,
+                    arxiv_id,
+                    version,
+                    data_root=data_root,
+                    keep_extensions=keep_extensions,
+                    archive_dir=archive_dir,
+                )
             rec["finished_at"] = _now()
             ver_log.write(rec)
+            if source_mode == "s3":
+                with (work_dir / "s3_attempts.jsonl").open("a", encoding="utf-8") as audit:
+                    audit.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    audit.flush()
+                    os.fsync(audit.fileno())
             state[(arxiv_id, version)] = rec
+            paper_progress.record(arxiv_id)
             processed.append(rec)
             paper_times.version(rec)
             if on_version is not None:

@@ -65,6 +65,21 @@ def test_snapshot_queries_only_historical_versions(tmp_path):
     assert [v["date"] for v in meta["versions"]] == [f"2026-06-0{k}T00:00:00Z" for k in (1, 2, 3)]
 
 
+def test_snapshot_only_discovery_never_calls_arxiv_for_missing_or_versions(tmp_path):
+    def forbidden(url):
+        pytest.fail(f"unexpected network: {url}")
+
+    result = discover(
+        ["2606.00001", "2606.00002"],
+        make_client(forbidden),
+        tmp_path / "corpus",
+        snapshot=snapshot(tmp_path, 3),
+        snapshot_only=True,
+    )
+    assert result.found == {"2606.00001": 3}
+    assert "2606.00002" in result.missing
+
+
 def test_snapshot_loader_accepts_standard_json_spacing(tmp_path):
     assert (
         load_snapshot(snapshot(tmp_path), ["2606.00001"])["2606.00001"]["title"] == "Current title"

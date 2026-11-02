@@ -9,6 +9,151 @@ from src.benchmark.checkpoints import Checkpoints, prepare_drive
 from src.benchmark.runner import BenchmarkConfig, plan_chunks, prepare_run
 
 
+def test_hybrid_groups_all_v1_before_multi_and_preserves_every_id():
+    from src.benchmark.runner import Chunk, order_hybrid_chunks
+    from src.crawler.s3_partition import Partition
+
+    chunks = [Chunk("dang", 0, ("a", "b")), Chunk("dang", 2, ("c", "d"))]
+    groups = Partition(only_v1=["a", "c"], multi_version=["b", "d"], missing=[])
+    phases = order_hybrid_chunks(chunks, groups)
+    assert [(phase, list(chunk.ids)) for phase, chunk in phases] == [
+        ("only_v1", ["a"]),
+        ("only_v1", ["c"]),
+        ("multi_version", ["b"]),
+        ("multi_version", ["d"]),
+    ]
+
+
+def test_hybrid_rejects_missing_snapshot_metadata():
+    from src.benchmark.runner import Chunk, order_hybrid_chunks
+    from src.crawler.s3_partition import Partition
+
+    with pytest.raises(ValueError, match="missing"):
+        order_hybrid_chunks([Chunk("dang", 0, ("a",))], Partition([], [], ["a"]))
+
+
+def test_s3_modes_require_snapshot_manifest_and_bundle_directory(tmp_path):
+    with pytest.raises(ValueError, match="snapshot"):
+        plan_chunks(BenchmarkConfig("test", "sample", ("dang",), count=1, source_mode="s3"))
+
+
+def test_s3_index_records_corrupt_bundle_for_fallback(tmp_path):
+    from src.benchmark.runner import prepare_s3_index
+
+    manifest = tmp_path / "manifest.xml"
+    manifest.write_text("""<arXivSRC><file><filename>src/arXiv_src_2604_001.tar</filename>
+        <first_item>2604.20535</first_item><last_item>2604.20536</last_item>
+        <size>4</size><md5sum>8d777f385d3dfec8815d20f7496026dc</md5sum>
+        <timestamp>2026-05-01 00:00:00</timestamp></file></arXivSRC>""")
+    (tmp_path / "arXiv_src_2604_001.tar").write_bytes(b"bad!")
+    result = prepare_s3_index(manifest, tmp_path, ["2604.20535", "2604.20536"])
+    assert result["2604.20535"]["status"] == "bundle_error"
+    assert result["2604.20536"]["status"] == "bundle_error"
+    assert "checksum" in result["2604.20535"]["reason"].lower()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatch, corrupt):
+    import hashlib
+    import io
+    import tarfile
+
+    from src.benchmark import runner
+    from src.tests import test_run_pipeline as fixture
+
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    prepare_drive(drive, "team", initialize=True)
+    bundles = tmp_path / "bundles"
+    bundles.mkdir()
+    bundle_path = bundles / "arXiv_src_2604_001.tar"
+    with tarfile.open(bundle_path, "w") as tar:
+        data = b"\\documentclass{article}\\begin{document}Hello\\end{document}"
+        item = tarfile.TarInfo("2604.20535.tex")
+        item.size = len(data)
+        tar.addfile(item, io.BytesIO(data))
+    manifest = tmp_path / "manifest.xml"
+    manifest.write_text(f"""<arXivSRC><file><filename>src/{bundle_path.name}</filename>
+        <first_item>2604.20535</first_item><last_item>2604.20537</last_item>
+        <size>{bundle_path.stat().st_size}</size><md5sum>{hashlib.md5(bundle_path.read_bytes()).hexdigest()}</md5sum>
+        <timestamp>2026-04-05 00:00:00</timestamp></file></arXivSRC>""")
+    if corrupt:
+        bundle_path.write_bytes(b"corrupt bundle")
+    snapshot_path = tmp_path / "snapshot.jsonl"
+    records = []
+    for pid, count in [("2604.20535", 1), ("2604.20536", 1), ("2604.20537", 2)]:
+        records.append(
+            dict(
+                id=pid,
+                title="T",
+                authors="Ada",
+                versions=[
+                    dict(version=f"v{i}", created=f"2026-04-0{i}T00:00:00Z")
+                    for i in range(1, count + 1)
+                ],
+            )
+        )
+    snapshot_path.write_text("\n".join(json.dumps(x) for x in records), encoding="utf-8")
+    monkeypatch.setattr(fixture, "VERSIONS", {"2604.20535": 1, "2604.20536": 1, "2604.20537": 2})
+    fake = fixture.FakeArxiv()
+    monkeypatch.setattr("src.run_pipeline.HttpClient", lambda *a, **kw: fixture.client_for(fake))
+    phases = []
+
+    class FinishedProcess:
+        def __init__(self, command, **kwargs):
+            payload = json.loads(Path(command[-1]).read_text())
+            phases.append((payload["source_mode"], payload["ids"]))
+            runner.run_child(payload)
+            profile = Path(command[command.index("--out") + 1])
+            (profile / "profile_summary.json").write_text(
+                json.dumps(
+                    dict(
+                        wall_s=1,
+                        rss_max_mb=10,
+                        rss_mean_mb=8,
+                        disk_max_mb=1,
+                        output_mb=1,
+                        started_at="2026-10-30T00:00:00Z",
+                        exit_code=0,
+                    )
+                )
+            )
+            (profile / "profile_samples.csv").write_text(
+                "t_sec,rss_total_mb,n_procs,disk_mb\n0,8,1,1\n"
+            )
+            self.returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FinishedProcess)
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+    cfg = BenchmarkConfig(
+        "hybrid",
+        "sample",
+        ("dang",),
+        count=3,
+        references=False,
+        snapshot=str(snapshot_path),
+        source_mode="arxiv_s3",
+        s3_manifest=str(manifest),
+        s3_bundle_dir=str(bundles),
+    )
+    result = runner.run_benchmark(
+        cfg, drive_root=drive, local_root=tmp_path / "local", revision="abc", team_id="team"
+    )
+    assert phases == [
+        ("s3", ["2604.20535", "2604.20536"]),
+        ("arxiv", ["2604.20535", "2604.20536"]),
+        ("arxiv", ["2604.20537"]),
+    ]
+    assert result["complete"]
+    assert result["timing_complete"]
+    assert ("2604.20535v1" in fake.downloads) is corrupt
+    assert "2604.20536v1" in fake.downloads
+    assert set(fake.downloads) >= {"2604.20537v1", "2604.20537v2"}
+
+
 def test_final_scope_and_last_partial_chunk():
     chunks = plan_chunks(BenchmarkConfig(run_id="final-1", chunk_size=137))
     ids = [i for c in chunks for i in c.ids]
@@ -109,6 +254,32 @@ def test_checkpoint_survives_kill_and_ignores_stray_upload(tmp_path):
     assert (restored / "data/corpus/2604-20535/v1/main.tex").read_text() == "complete source"
     assert not (restored / "work/run.lock").exists()
     assert not (restored / "data/corpus/2604-20535/v1/main.tex.tmp-deadbeef").exists()
+
+
+def test_checkpoint_snapshots_live_profiler_output(tmp_path, monkeypatch):
+    from src.benchmark import checkpoints
+
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    seed_version(local)
+    live = local / "work/profile/bench/console.log"
+    live.parent.mkdir(parents=True)
+    live.write_bytes(b"first\n")
+    original = checkpoints.digest
+    changed = False
+
+    def digest_while_profiler_writes(path):
+        nonlocal changed
+        result = original(path)
+        if not changed and Path(path).read_bytes() == b"first\n":
+            live.write_bytes(b"first\nsecond\n")
+            changed = True
+        return result
+
+    monkeypatch.setattr(checkpoints, "digest", digest_while_profiler_writes)
+    Checkpoints(local, remote).save(["2604.20535"])
+    assert changed
+    assert (remote / "work/profile/bench/console.log").read_text() == "first\n"
+    Checkpoints(tmp_path / "restored", remote).restore()
 
 
 def test_failed_version_is_not_committed_and_corruption_is_detected(tmp_path):
