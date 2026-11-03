@@ -136,6 +136,7 @@ class PaperProgress:
     def __init__(self, found, state, data_root):
         self.found, self.state, self.data_root = found, state, data_root
         self.complete = {paper for paper in found if self._complete(paper)}
+        self._report()
 
     def _complete(self, paper):
         return bool(self.found.get(paper)) and all(
@@ -147,13 +148,15 @@ class PaperProgress:
         if paper in self.complete or not self._complete(paper):
             return
         self.complete.add(paper)
-        if len(self.complete) % 10 == 0 or len(self.complete) == len(self.found):
-            log.info(
-                "PAPER_PROGRESS source_terminal=%d/%d discovered papers in chunk; "
-                "includes no_tex/unavailable; references separate",
-                len(self.complete),
-                len(self.found),
-            )
+        self._report()
+
+    def _report(self):
+        log.info(
+            "PAPER_PROGRESS source_terminal=%d/%d discovered papers in chunk; "
+            "includes no_tex/unavailable; references separate",
+            len(self.complete),
+            len(self.found),
+        )
 
 
 def _publish_parser_job(

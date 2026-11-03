@@ -25,6 +25,8 @@ from importlib.metadata import distributions
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from tqdm.auto import tqdm
+
 from src import config
 from src.benchmark.checkpoints import Checkpoints, prepare_drive, write_json
 from src.utils.ids import iter_id_range
@@ -264,8 +266,8 @@ def checkpoint_backend(local, remote, *, repo_id=None, hub=None):
     return Checkpoints(local, remote)
 
 
-def forward_paper_progress(path: Path, offset: int) -> int:
-    """Forward complete progress log lines without duplicating partial lines."""
+def forward_paper_progress(path: Path, offset: int, on_progress) -> int:
+    """Read completed progress events without consuming partial lines."""
     with path.open("rb") as console:
         console.seek(offset)
         while True:
@@ -273,8 +275,11 @@ def forward_paper_progress(path: Path, offset: int) -> int:
             line = console.readline()
             if not line or not line.endswith(b"\n"):
                 return start
-            if b"PAPER_PROGRESS " in line:
-                print(line.decode("utf-8", errors="replace").rstrip(), flush=True)
+            match = re.search(rb"PAPER_PROGRESS source_terminal=(\d+)/(\d+)", line)
+            if match:
+                count, total = map(int, match.groups())
+                if count <= total:
+                    on_progress(count, total)
 
 
 def run_child(payload: dict) -> None:
@@ -632,12 +637,21 @@ def run_benchmark(
                     stderr=subprocess.STDOUT,
                 )
             console_offset = 0
+            paper_bar = tqdm(total=len(chunk.ids), desc="Source papers", unit="paper", file=sys.stdout)
+
+            def update_paper_bar(count, total):
+                paper_bar.total = total
+                paper_bar.n = count
+                paper_bar.refresh()
+
             try:
                 while child.poll() is None:
                     measurements.check()
-                    console_offset = forward_paper_progress(prof / "console.log", console_offset)
+                    console_offset = forward_paper_progress(
+                        prof / "console.log", console_offset, update_paper_bar
+                    )
                     time.sleep(1)
-                forward_paper_progress(prof / "console.log", console_offset)
+                forward_paper_progress(prof / "console.log", console_offset, update_paper_bar)
             except BaseException:
                 # Stop the entire profiler/crawler process tree before checkpointing.
                 try:
@@ -660,6 +674,8 @@ def run_benchmark(
                     child.wait()
                     child = None
                 raise
+            finally:
+                paper_bar.close()
             last_exit = time.monotonic()
             code, child = child.returncode, None
             # Child may have published periodic checkpoints; refresh the parent index.
