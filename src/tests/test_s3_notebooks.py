@@ -43,6 +43,15 @@ def test_hybrid_uses_drive_without_huggingface_configuration():
     assert 'DRIVE / "runs" / RUN_ID / "MANIFEST.json"' in src
 
 
+def test_hybrid_member_selection_and_checkpoint_defaults():
+    cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
+    src = "".join(cells[1]["source"])
+    assert 'MEMBER = "dang"' in src
+    assert all(f'"{name}"' in src for name in ("dang", "thien", "tien", "hieu"))
+    assert 'RANGES = (MEMBER,)' in src
+    assert "CHECKPOINT_S = 600" in src
+
+
 def test_hybrid_missing_bundle_goes_to_arxiv_fallback():
     cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
     source = "".join(next(c for c in cells if c.get("id") == "3e980f1a")["source"])

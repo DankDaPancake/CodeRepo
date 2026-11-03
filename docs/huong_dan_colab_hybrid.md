@@ -18,16 +18,17 @@ Mở notebook từ GitHub, khởi động runtime mới và chạy từng cell t
 ```python
 MODE = "sample"
 RUN_ID = "m1-hybrid-dang-0000-0999-<ten-run-moi>"
-RANGES = ("dang",)
+MEMBER = "dang"  # chọn dang, thien, tien hoặc hieu
+RANGES = (MEMBER,)
 OFFSET = 0
 COUNT = 1000
 CHUNK_SIZE = 100
 WITH_REFERENCES = True
-CHECKPOINT_S = 300
+CHECKPOINT_S = 600
 RESUME = False
 ```
 
-Thay `RUN_ID` bằng tên mới, chưa tồn tại trên Drive. Đây là sample, không phải final benchmark. `COUNT` và `OFFSET` áp dụng cho từng range được chọn. Snapshot mẫu cho phạm vi này có 700 paper chỉ-v1 và 300 paper nhiều version; phân loại sẽ được tính lại từ file snapshot thực tế.
+Mỗi thành viên chọn `MEMBER` là `dang`, `thien`, `tien` hoặc `hieu`; đặt `RUN_ID` mới tương ứng với tên và khoảng offset, chưa tồn tại trên Drive. `RANGES` được tạo tự động từ `MEMBER`. Đây là sample, không phải final benchmark. `COUNT` và `OFFSET` áp dụng cho từng range được chọn. Snapshot mẫu cho phạm vi này có 700 paper chỉ-v1 và 300 paper nhiều version; phân loại sẽ được tính lại từ file snapshot thực tế.
 
 Trong cell cấu hình S3, ban đầu giữ:
 
