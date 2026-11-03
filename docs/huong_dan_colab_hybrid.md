@@ -1,6 +1,6 @@
 # Hướng dẫn chạy crawler hybrid S3 + arXiv trên Colab
 
-Notebook: [`src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Trong lúc PR chưa merge, mở [bản trên nhánh fork bằng Colab](https://colab.research.google.com/github/DankDaPancake/CodeRepo/blob/feat/s3-drive-pipeline/src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Notebook pin `CODE_REF` theo revision triển khai: không đổi revision khi resume.
+Notebook: [`src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Mở [notebook trên main bằng Colab](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/main/src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Notebook pin `CODE_REF` theo revision triển khai: không đổi revision khi resume.
 
 ## 1. Chuẩn bị
 
@@ -25,7 +25,6 @@ CHUNK_SIZE = 100
 WITH_REFERENCES = True
 CHECKPOINT_S = 300
 RESUME = False
-USE_HUGGINGFACE = False  # output Drive
 ```
 
 Thay `RUN_ID` bằng tên mới, chưa tồn tại trên Drive. Đây là sample, không phải final benchmark. `COUNT` và `OFFSET` áp dụng cho từng range được chọn. Snapshot mẫu cho phạm vi này có 700 paper chỉ-v1 và 300 paper nhiều version; phân loại sẽ được tính lại từ file snapshot thực tế.
