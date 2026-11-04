@@ -10,7 +10,7 @@ Mặc định chạy lại Đăng offset 0/count 2500 (`2604.20535`–`2604.2303
 - `MODE = "partition"`, `MEMBER = "dang"`, `OFFSET = 0`, `COUNT = 2500`.
 - `ARCHIVE_BATCH_SIZE = 100`; `.tar.gz` mức nén 1 cố định cho thí nghiệm này.
 - `CHECKPOINT_S = 600`; checkpoint theo ranh giới version hoàn tất, không phải deadline cứng.
-- Output: `/content/drive/MyDrive/arxiv-nhom1/archive-tests`. Tạo folder này trước; khởi tạo `TEAM.json` một lần bằng `INITIALIZE_TEAM_FOLDER=True`, sau đó dùng `False`.
+- Output: `/content/drive/MyDrive/arxiv-nhom1`, dùng lại folder và `TEAM.json` hiện có; chỉ khởi tạo nếu marker chưa có.
 - Snapshot và bulk S3 dùng lại các đường dẫn từ notebook hybrid. `S3_DOWNLOAD=False` mặc định không tải bulk lại.
 - `CODE_REF="experiment/hybrid-archive-batches"` resolve SHA từ fork `DankDaPancake/CodeRepo` khi bắt đầu run mới; branch này phải được push trước khi chạy Colab. Có thể pin SHA đã publish. Resume dùng SHA trong manifest của run.
 - Sau khi xem phạm vi và kế hoạch S3, bật `RUN_CRAWL=True` ở cell chuẩn bị. Không dùng run ID của lượt raw cũ.
@@ -18,7 +18,7 @@ Mặc định chạy lại Đăng offset 0/count 2500 (`2604.20535`–`2604.2303
 ## Dữ liệu trên Drive
 
 ```text
-archive-tests/runs/<RUN_ID>/
+arxiv-nhom1/runs/<RUN_ID>/
   MANIFEST.json
   INDEX.json                       # schema batch-archive-v1
   indices/<generation>.json
