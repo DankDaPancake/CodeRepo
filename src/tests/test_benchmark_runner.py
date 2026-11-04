@@ -53,7 +53,8 @@ def test_s3_index_records_corrupt_bundle_for_fallback(tmp_path):
 
 
 @pytest.mark.parametrize("corrupt", [False, True])
-def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatch, corrupt):
+@pytest.mark.parametrize("archives", [False, True])
+def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatch, corrupt, archives):
     import hashlib
     import io
     import tarfile
@@ -97,6 +98,16 @@ def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatc
     monkeypatch.setattr(fixture, "VERSIONS", {"2604.20535": 1, "2604.20536": 1, "2604.20537": 2})
     fake = fixture.FakeArxiv()
     monkeypatch.setattr("src.run_pipeline.HttpClient", lambda *a, **kw: fixture.client_for(fake))
+    if archives:
+        def refs(ids, data_root, *, on_record=None):
+            for pid in ids:
+                record = dict(arxiv_id=pid, status="ok", references=[])
+                folder = data_root / pid.replace(".", "-")
+                (folder / "references.json").write_text(json.dumps(record))
+                if on_record:
+                    on_record(record)
+            return None
+        monkeypatch.setattr("src.run_pipeline._start_references", refs)
     phases = []
 
     class FinishedProcess:
@@ -133,7 +144,8 @@ def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatc
         "sample",
         ("dang",),
         count=3,
-        references=False,
+        references=archives,
+        archive_batch_size=2 if archives else 0,
         snapshot=str(snapshot_path),
         source_mode="arxiv_s3",
         s3_manifest=str(manifest),
@@ -152,6 +164,16 @@ def test_hybrid_runner_executes_s3_then_fallback_then_multi(tmp_path, monkeypatc
     assert ("2604.20535v1" in fake.downloads) is corrupt
     assert "2604.20536v1" in fake.downloads
     assert set(fake.downloads) >= {"2604.20537v1", "2604.20537v2"}
+    if archives:
+        remote = drive / "runs/hybrid"
+        index = json.loads((remote / "INDEX.json").read_text())
+        assert not (remote / "data/corpus").exists()
+        assert all(batch["complete"] for batch in index["batches"])
+        from src.benchmark.archive_checkpoints import ArchiveCheckpoints
+        restored = tmp_path / "verify-restored"
+        ArchiveCheckpoints(restored, remote).restore()
+        assert (restored / "data/corpus/2604-20537/v2").is_dir()
+        assert (restored / "book_csv/benchmark_summary.csv").is_file()
 
 
 def test_final_scope_and_last_partial_chunk():
@@ -240,6 +262,86 @@ def seed_version(root, *, status="ok"):
     rec = dict(arxiv_id="2604.20535", version=1, status=status, files=["main.tex"])
     (work / "versions.jsonl").write_text(json.dumps(rec) + "\n")
     return paper
+
+
+@pytest.fixture
+def resume_baseline_checkpoint(tmp_path):
+    """A complete multi-version paper and a paper missing v2/references."""
+    local, remote = tmp_path / "local", tmp_path / "remote"
+    work = local / "work"
+    work.mkdir(parents=True)
+    ids = ["2604.20535", "2604.20536"]
+    records = []
+    for paper_id in ids:
+        paper = local / "data/corpus" / paper_id.replace(".", "-")
+        paper.mkdir(parents=True)
+        metadata = dict(
+            arxiv_id=paper_id, title="Paper", authors=["Author"],
+            submission_date="2026-04-01T00:00:00Z",
+            revised_dates=["2026-04-02T00:00:00Z"], num_versions=2,
+            venue=None, doi=None,
+        )
+        (paper / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+        if paper_id == ids[0]:
+            (paper / "references.json").write_text("[]", encoding="utf-8")
+        for version in (1, 2):
+            if paper_id == ids[1] and version == 2:
+                records.append(dict(arxiv_id=paper_id, version=version, status="failed", files=[]))
+                continue
+            directory = paper / f"v{version}"
+            directory.mkdir()
+            (directory / "main.tex").write_text(f"source {paper_id} v{version}", encoding="utf-8")
+            (directory / "refs.bib").write_text("bibliography", encoding="utf-8")
+            records.append(dict(arxiv_id=paper_id, version=version, status="ok", files=["main.tex", "refs.bib"]))
+    (work / "versions.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    Checkpoints(local, remote).save(ids)
+    return remote, ids
+
+
+def test_resume_baseline_restores_all_completed_payloads_before_skipping(
+    tmp_path, monkeypatch, resume_baseline_checkpoint, record_property
+):
+    import time
+    from src.benchmark import checkpoints
+    from src.benchmark.runner import Chunk, _chunk_complete
+
+    remote, ids = resume_baseline_checkpoint
+    restored = tmp_path / "restored"
+    copied = []
+    copy = checkpoints.shutil.copyfile
+
+    def observe_copy(source, destination, *args, **kwargs):
+        copied.append((Path(source), Path(source).stat().st_size))
+        return copy(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoints.shutil, "copyfile", observe_copy)
+    start = time.perf_counter()
+    Checkpoints(restored, remote).restore()
+    elapsed = time.perf_counter() - start
+    payloads = [(path, size) for path, size in copied if "data" in path.relative_to(remote).parts]
+    record_property("restore_seconds", elapsed)
+    record_property("restore_files", len(copied))
+    record_property("restore_payload_bytes", sum(size for _, size in payloads))
+    assert len(payloads) == 9  # six source files, two metadata files, one references file
+    assert all((restored / path.relative_to(remote)).is_file() for path, _ in payloads)
+    assert _chunk_complete(Chunk("dang", 0, (ids[0],)), restored, references=True)
+    assert not _chunk_complete(Chunk("dang", 1, (ids[1],)), restored, references=True)
+
+
+@pytest.mark.parametrize("relative", ["work/versions.jsonl", "data/corpus/2604-20535/v1/main.tex"])
+def test_resume_baseline_rejects_missing_journal_or_corrupt_payload(
+    tmp_path, resume_baseline_checkpoint, relative
+):
+    remote, _ = resume_baseline_checkpoint
+    target = remote / relative
+    if relative.startswith("work/"):
+        target.unlink()
+    else:
+        target.write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="mismatch"):
+        Checkpoints(tmp_path / "restored", remote).restore()
 
 
 def test_checkpoint_survives_kill_and_ignores_stray_upload(tmp_path):

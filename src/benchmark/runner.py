@@ -51,6 +51,8 @@ class BenchmarkConfig:
     source_mode: str = "arxiv"
     s3_manifest: str | None = None
     s3_bundle_dir: str | None = None
+    snapshot_group: str = "all"
+    archive_batch_size: int = 0  # Drive only: 0 keeps the existing raw mirror
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,14 @@ def prepare_s3_index(manifest_path: Path, directory: Path, ids: list[str]) -> di
 
 
 def plan_chunks(cfg: BenchmarkConfig) -> list[Chunk]:
+    if not isinstance(cfg.archive_batch_size, int) or isinstance(cfg.archive_batch_size, bool) or cfg.archive_batch_size < 0:
+        raise ValueError("Archive batch size must be a nonnegative integer")
+    if cfg.archive_batch_size and (cfg.storage_backend != "drive" or not cfg.references):
+        raise ValueError("Archive batches require Drive and references")
+    if cfg.snapshot_group not in ("all", "only_v1", "multi_version"):
+        raise ValueError("Invalid snapshot group")
+    if cfg.snapshot_group != "all" and (not cfg.snapshot or cfg.mode == "final"):
+        raise ValueError("Snapshot groups require a snapshot and partition/sample mode")
     if cfg.source_mode not in ("arxiv", "s3", "arxiv_s3"):
         raise ValueError("Invalid source mode")
     if cfg.source_mode != "arxiv" and not (cfg.snapshot and cfg.s3_manifest and cfg.s3_bundle_dir):
@@ -157,12 +167,30 @@ def plan_chunks(cfg: BenchmarkConfig) -> list[Chunk]:
             raise ValueError("Selection is empty")
         for pos in range(0, len(ids), cfg.chunk_size):
             chunks.append(Chunk(owner, cfg.offset + pos, tuple(ids[pos : pos + cfg.chunk_size])))
+    if cfg.snapshot_group != "all":
+        from src.crawler.s3_partition import partition_snapshot
+
+        all_ids = [pid for chunk in chunks for pid in chunk.ids]
+        partition = partition_snapshot(Path(cfg.snapshot), all_ids)
+        if partition.missing:
+            raise ValueError(f"Snapshot missing or invalid for {len(partition.missing)} IDs")
+        selected = set(getattr(partition, cfg.snapshot_group))
+        chunks = [Chunk(chunk.owner, chunk.offset, tuple(pid for pid in chunk.ids if pid in selected))
+                  for chunk in chunks]
+        chunks = [chunk for chunk in chunks if chunk.ids]
+        if not chunks:
+            raise ValueError("Snapshot group selection is empty")
     return chunks
 
 
 def prepare_run(cfg: BenchmarkConfig, root: Path, revision: str, *, resume: bool) -> dict:
     chunks = plan_chunks(cfg)
-    identity = {"config": json.loads(json.dumps(asdict(cfg))), "code_revision": revision}
+    config_data = asdict(cfg)
+    if cfg.snapshot_group == "all":
+        config_data.pop("snapshot_group")  # preserve existing run manifests
+    if not cfg.archive_batch_size:
+        config_data.pop("archive_batch_size")
+    identity = {"config": json.loads(json.dumps(config_data)), "code_revision": revision}
     if cfg.snapshot:
         from src.crawler.snapshot import sha256
 
@@ -263,10 +291,18 @@ def checkpoint_backend(local, remote, *, repo_id=None, hub=None):
 
         hub = hub or HubStore(repo_id, remote.parent.parent / ".hf-cache")
         return HFCheckpoints(local, remote, hub, f"runs/{remote.name}")
+    for path in (Path(local) / "work/manifest.json", Path(remote) / "MANIFEST.json"):
+        if path.is_file():
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            if manifest.get("config", {}).get("archive_batch_size", 0):
+                from src.benchmark.archive_checkpoints import ArchiveCheckpoints
+
+                return ArchiveCheckpoints(local, remote)
+            break
     return Checkpoints(local, remote)
 
 
-def forward_paper_progress(path: Path, offset: int, on_progress) -> int:
+def forward_paper_progress(path: Path, offset: int, on_progress, on_version=None) -> int:
     """Read completed progress events without consuming partial lines."""
     with path.open("rb") as console:
         console.seek(offset)
@@ -280,6 +316,11 @@ def forward_paper_progress(path: Path, offset: int, on_progress) -> int:
                 count, total = map(int, match.groups())
                 if count <= total:
                     on_progress(count, total)
+            match = re.search(rb"VERSION_PROGRESS source_terminal=(\d+)/(\d+)", line)
+            if match and on_version is not None:
+                count, total = map(int, match.groups())
+                if count <= total:
+                    on_version(count, total)
 
 
 def run_child(payload: dict) -> None:
@@ -637,21 +678,30 @@ def run_benchmark(
                     stderr=subprocess.STDOUT,
                 )
             console_offset = 0
-            paper_bar = tqdm(total=len(chunk.ids), desc="Source papers", unit="paper", file=sys.stdout)
+            label = f"{phase} {chunk.owner} papers" if cfg.snapshot_group != "all" else "Source papers"
+            paper_bar = tqdm(total=len(chunk.ids), desc=label, unit="paper", file=sys.stdout)
+            version_bar = (tqdm(total=0, desc=f"{chunk.owner} versions", unit="version", file=sys.stdout)
+                           if cfg.snapshot_group == "multi_version" else None)
 
             def update_paper_bar(count, total):
                 paper_bar.total = total
                 paper_bar.n = count
                 paper_bar.refresh()
 
+            def update_version_bar(count, total):
+                if version_bar is not None:
+                    version_bar.total = total
+                    version_bar.n = count
+                    version_bar.refresh()
+
             try:
                 while child.poll() is None:
                     measurements.check()
                     console_offset = forward_paper_progress(
-                        prof / "console.log", console_offset, update_paper_bar
+                        prof / "console.log", console_offset, update_paper_bar, update_version_bar
                     )
                     time.sleep(1)
-                forward_paper_progress(prof / "console.log", console_offset, update_paper_bar)
+                forward_paper_progress(prof / "console.log", console_offset, update_paper_bar, update_version_bar)
             except BaseException:
                 # Stop the entire profiler/crawler process tree before checkpointing.
                 try:
@@ -676,6 +726,8 @@ def run_benchmark(
                 raise
             finally:
                 paper_bar.close()
+                if version_bar is not None:
+                    version_bar.close()
             last_exit = time.monotonic()
             code, child = child.returncode, None
             # Child may have published periodic checkpoints; refresh the parent index.
@@ -837,12 +889,12 @@ def run_benchmark(
             evidence = cleanup("local-evidence-export", lambda: export_evidence(cfg, local))
             if (
                 evidence is not None
-                and hub is not None
+                and (hub is not None or cfg.archive_batch_size)
                 and checkpoint_published
                 and not cleanup_errors
             ):
                 cleanup(
-                    "HF-final-evidence-publication",
+                    "final-evidence-publication",
                     lambda: checkpoint_backend(local, remote, repo_id=cfg.hf_repo_id, hub=hub).save(
                         [i for c in plan_chunks(cfg) for i in c.ids], phase="evidence-publication"
                     ),

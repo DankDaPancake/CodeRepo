@@ -530,6 +530,9 @@ def main(argv: list[str] | None = None) -> int:
             ]
         )
     session_metrics, session_samples, audit = session_exports(work_dirs, args.data_root, len(ids))
+    from src.benchmark.archive_checkpoints import archive_timing_rows
+
+    bench.extend(archive_timing_rows(work_dirs))
     if session_metrics:
         renamed = {
             "wall_time_e2e": "pipeline_wall_time",
