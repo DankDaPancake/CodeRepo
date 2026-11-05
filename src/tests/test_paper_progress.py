@@ -1,6 +1,34 @@
 from src.run_pipeline import PaperProgress
 
 
+def test_version_progress_tracks_terminal_versions_and_resume(tmp_path, caplog):
+    found = {"p": 2}
+    (tmp_path / "p" / "v1").mkdir(parents=True)
+    state = {("p", 1): {"arxiv_id": "p", "version": 1, "status": "ok"}}
+    with caplog.at_level("INFO"):
+        progress = PaperProgress(found, state, tmp_path)
+        state[("p", 2)] = {"arxiv_id": "p", "version": 2, "status": "failed"}
+        progress.record("p")
+        (tmp_path / "p" / "v2").mkdir()
+        state[("p", 2)]["status"] = "no_tex"
+        progress.record("p")
+        progress.record("p")
+    assert caplog.text.count("VERSION_PROGRESS source_terminal=1/2") == 1
+    assert caplog.text.count("VERSION_PROGRESS source_terminal=2/2") == 1
+
+
+def test_forward_version_progress_with_partial_lines(tmp_path):
+    from src.benchmark.runner import forward_paper_progress
+    path = tmp_path / "console.log"
+    path.write_bytes(b"VERSION_PROGRESS source_terminal=1/3\nVERSION_PRO")
+    versions = []
+    offset = forward_paper_progress(path, 0, lambda *args: None, lambda *args: versions.append(args))
+    with path.open("ab") as stream:
+        stream.write(b"GRESS source_terminal=2/3\n")
+    forward_paper_progress(path, offset, lambda *args: None, lambda *args: versions.append(args))
+    assert versions == [(1, 3), (2, 3)]
+
+
 def test_progress_counts_only_papers_with_all_versions_and_handles_resume(tmp_path, caplog):
     found = {str(i): (2 if i == 10 else 1) for i in range(1, 22)}
     state = {}
