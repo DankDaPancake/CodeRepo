@@ -7,6 +7,12 @@ Rules (statement M2):
 - a command inside a ``%`` comment is plain text and is not followed;
 - ``.tex`` files that cannot be reached from the root are redundant and ignored.
 
+Beyond the statement, to match "what a reader of the final PDF would see": text inside
+``\\begin{comment}...\\end{comment}`` and ``\\iffalse...\\fi`` is never typeset, so it is
+dropped before anything is read (``drop_disabled``): its includes are not followed and
+``expand`` does not return it. At most ``MAX_INCLUDE_DEPTH`` nested files are followed.
+Not followed (not in the statement): ``\\subfile``, ``\\import``, ``\\InputIfFileExists``.
+
 Several files declare ``\\documentclass`` in about 2.5% of versions (main paper +
 supplementary, unedited conference templates, rebuttal...). The root is then the
 candidate that no other candidate includes, has ``\\begin{document}``, is not a
@@ -69,6 +75,7 @@ _SIDE_DOC_WORDS = frozenset(
     }
 )
 TITLE_MATCH = 0.6  # share of the arXiv title's words found in the candidate's \title
+MAX_INCLUDE_DEPTH = 40  # nested files followed; TeX allows 15, so a deeper chain is a mistake
 
 
 @dataclass
@@ -109,6 +116,64 @@ def _segments(text: str) -> Iterator[tuple[str, str]]:
         yield text[last : m.start(2)], m.group(2)
         last = m.end(2)
     yield text[last:], ""
+
+
+# \begin{comment}, \end{comment}, \iffalse, any other \if... (except \iff and the etoolbox style
+# \ifthenelse{...}, which have no \fi), \else, \fi.
+_SWITCH_RE = re.compile(
+    r"\\begin\s*\{comment\}|\\end\s*\{comment\}|\\iffalse(?![A-Za-z@])|"
+    r"\\if(?!f(?![A-Za-z@]))[A-Za-z@]*(?![A-Za-z@])(?!\s*\{)|\\fi(?![A-Za-z@])|\\else(?![A-Za-z@])"
+)
+_LET_BEFORE_RE = re.compile(r"\\(?:let|def|newif)\s*(?:\\[A-Za-z@]+\s*=?\s*)?$")
+
+
+def drop_disabled(text: str) -> str:
+    """``text`` without what LaTeX never typesets: ``comment`` environments and ``\\iffalse``.
+
+    ``\\iffalse ... \\fi`` (nested conditionals counted, the ``\\else`` branch kept) and
+    ``\\begin{comment} ... \\end{comment}`` are dropped; ``%`` comments are left alone. A block
+    that never closes, or ``\\iffalse`` used in ``\\let\\ifdraft\\iffalse``, is not touched.
+    """
+    spans: list[tuple[int, int]] = []
+    mode: str | None = None  # None, "comment", "false" (before \else) or "else"
+    start = nest = 0
+    offset = 0
+    for code, comment in _segments(text):
+        for m in _SWITCH_RE.finditer(code):
+            token, at, end = m.group(0), offset + m.start(), offset + m.end()
+            if mode is None:
+                if token.startswith("\\begin"):
+                    mode, start = "comment", at
+                elif token == "\\iffalse" and not _LET_BEFORE_RE.search(
+                    code[max(0, m.start() - 40) : m.start()]
+                ):
+                    mode, start, nest = "false", at, 1
+            elif mode == "comment":
+                if token.startswith("\\end"):
+                    spans.append((start, end))
+                    mode = None
+            elif token.startswith("\\if"):
+                nest += 1
+            elif token == "\\fi":
+                nest -= 1
+                if mode == "false" and nest == 0:
+                    spans.append((start, end))
+                    mode = None
+                elif mode == "else" and nest < 0:
+                    spans.append((at, end))  # the \fi that closes the \iffalse ... \else ... \fi
+                    mode = None
+            elif token == "\\else" and mode == "false" and nest == 1:
+                spans.append((start, end))  # keep the \else branch, drop "\iffalse ... \else"
+                mode, nest = "else", 0
+        offset += len(code) + len(comment)
+    if not spans:
+        return text
+    out, last = [], 0
+    for begin, end in spans:
+        out.append(text[last:begin])
+        last = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _is_side_document(rel: str) -> bool:
@@ -153,6 +218,7 @@ class TexVersion:
 
     @staticmethod
     def _parse(text: str) -> _TexFile:
+        text = drop_disabled(text)  # what LaTeX skips is not in the PDF: no includes, no text
         code = strip_comments(text)
         dc = _DOCCLASS_RE.search(code)
         return _TexFile(
@@ -209,17 +275,19 @@ class TexVersion:
         missing: list[str] = []
         seen: set[str] = set()
 
-        def visit(rel: str) -> None:
+        def visit(rel: str, depth: int) -> None:
             seen.add(rel)
             order.append(rel)
             for name, target in self._targets(rel):
+                if target is not None and depth >= MAX_INCLUDE_DEPTH:
+                    target = None  # TeX itself stops at 15 nested files
                 if target is None:
                     if name not in missing:
                         missing.append(name)
                 elif target not in seen:
-                    visit(target)
+                    visit(target, depth + 1)
 
-        visit(start)
+        visit(start, 1)
         return order, missing
 
     # ----------------------------------------------------------------- root
@@ -275,7 +343,7 @@ class TexVersion:
                 if "#" in name or "\\" in name:
                     return m.group(0)
                 target = self.resolve(name, rel)
-                if target is None or target in stack:
+                if target is None or target in stack or len(stack) >= MAX_INCLUDE_DEPTH:
                     return m.group(0)
                 return render(target, stack | {target})
 

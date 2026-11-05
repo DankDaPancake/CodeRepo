@@ -167,7 +167,7 @@ python -m src.parser.gather data/corpus
 python -m src.parser.sample_set --data-root data/corpus --work-dir work --out data/m2-sample
 ```
 
-In code: `gather(version_dir)` returns the root file and the `.tex` files reachable through `\input`/`\include`; `expand(version_dir)` returns the root text with every `\input`/`\include` replaced by the included file.
+In code: `gather(version_dir)` returns the root file and the `.tex` files reachable through `\input`/`\include`; `expand(version_dir)` returns the root text with every `\input`/`\include` replaced by the included file. Text that LaTeX never typesets (`comment` environments, `\iffalse … \fi`) is dropped first, so its includes are not followed.
 
 ## References
 
