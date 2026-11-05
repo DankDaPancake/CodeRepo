@@ -124,3 +124,17 @@ def test_check_tables_detects_a_broken_hierarchy(corpus, tmp_path):
     pq.write_table(to_table("hierarchy", table), shard / "hierarchy.parquet")
     report = check(out)
     assert not report["ok"] and any("is not in elements" in p for p in report["problems"])
+
+
+def test_papers_csv_counts_elements_before_and_after_deduplication(corpus, tmp_path):
+    import csv
+
+    work = tmp_path / "work"
+    run(corpus, tmp_path / "out", work, options=Options(), progress=False)
+    with open(work / "m2_papers.csv", encoding="utf-8", newline="") as fh:
+        rows = {r["arxiv_id"]: r for r in csv.DictReader(fh)}
+    first = rows["2606.00001"]
+    # v1 and v2 share most sentences: fewer elements stored than nodes found
+    assert int(first["elements_before"]) > int(first["elements"]) - 2  # minus the two roots
+    assert int(first["bibtex_before"]) == 2 and int(first["bibtex"]) == 1  # one reference, 2 keys
+    assert rows["2606.00002"]["elements_before"] == "1"  # the empty v1 has no nodes
