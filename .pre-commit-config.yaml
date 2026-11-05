@@ -10,6 +10,7 @@ repos:
     rev: 0.9.1
     hooks:
       - id: nbstripout
+        args: [--keep-id]  # tests look cells up by id; do not renumber them
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

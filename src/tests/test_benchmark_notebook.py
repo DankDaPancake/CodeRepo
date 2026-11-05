@@ -8,10 +8,15 @@ from types import SimpleNamespace
 import pytest
 
 
-@pytest.mark.parametrize("name", [
-    "arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb",
-    "arxiv_nhom1_only_v1_benchmark.ipynb", "arxiv_nhom1_multi_version_benchmark.ipynb",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "arxiv_nhom1_crawl_benchmark.ipynb",
+        "arxiv_nhom1_s3_arxiv_benchmark.ipynb",
+        "arxiv_nhom1_only_v1_benchmark.ipynb",
+        "arxiv_nhom1_multi_version_benchmark.ipynb",
+    ],
+)
 def test_directory_and_run_configuration_are_separate_and_executable(name):
     path = Path(__file__).parents[1] / "notebooks" / name
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
@@ -101,7 +106,7 @@ def test_snapshot_cell_verifies_drive_input_before_storage(tmp_path, monkeypatch
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     index, cell = next((i, c) for i, c in enumerate(cells) if c.get("id") == "download-snapshot")
-    storage = next(i for i, c in enumerate(cells) if c.get('id') == 'authorize-storage')
+    storage = next(i for i, c in enumerate(cells) if c.get("id") == "authorize-storage")
     assert index < storage
     target, source = tmp_path / "snapshot.jsonl", tmp_path / "drive" / "input.jsonl"
     source.parent.mkdir()
@@ -159,7 +164,6 @@ def test_drive_authorization_mounts_drive(tmp_path, monkeypatch):
     values = {"STORAGE_BACKEND": "drive", "DRIVE_DIR": str(tmp_path)}
     exec("".join(cell["source"]), values)
     assert values["DRIVE"] == tmp_path
-
 
 
 def test_notebook_is_drive_only():

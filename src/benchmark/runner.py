@@ -174,7 +174,10 @@ def plan_chunks(cfg: BenchmarkConfig) -> list[Chunk]:
         all_ids = [pid for chunk in chunks for pid in chunk.ids]
         partition = partition_snapshot(Path(cfg.snapshot), all_ids)
         fingerprint = sha256(Path(cfg.snapshot))
-        if fingerprint in GROUP_SNAPSHOT_HASHES.values() and fingerprint != GROUP_SNAPSHOT_HASHES[cfg.snapshot_group]:
+        if (
+            fingerprint in GROUP_SNAPSHOT_HASHES.values()
+            and fingerprint != GROUP_SNAPSHOT_HASHES[cfg.snapshot_group]
+        ):
             raise ValueError("Snapshot belongs to a different group")
         verified_subset = fingerprint == GROUP_SNAPSHOT_HASHES[cfg.snapshot_group]
         other = partition.multi_version if cfg.snapshot_group == "only_v1" else partition.only_v1
@@ -183,8 +186,10 @@ def plan_chunks(cfg: BenchmarkConfig) -> list[Chunk]:
         if partition.missing and not verified_subset:
             raise ValueError(f"Snapshot missing or invalid for {len(partition.missing)} IDs")
         selected = set(getattr(partition, cfg.snapshot_group))
-        chunks = [Chunk(chunk.owner, chunk.offset, tuple(pid for pid in chunk.ids if pid in selected))
-                  for chunk in chunks]
+        chunks = [
+            Chunk(chunk.owner, chunk.offset, tuple(pid for pid in chunk.ids if pid in selected))
+            for chunk in chunks
+        ]
         chunks = [chunk for chunk in chunks if chunk.ids]
         if not chunks:
             raise ValueError("Snapshot group selection is empty")
@@ -676,21 +681,26 @@ def run_benchmark(
                     stderr=subprocess.STDOUT,
                 )
             console_offset = 0
-            label = f"{phase} {chunk.owner} papers" if cfg.snapshot_group != "all" else "Source papers"
+            label = (
+                f"{phase} {chunk.owner} papers" if cfg.snapshot_group != "all" else "Source papers"
+            )
             paper_bar = tqdm(total=len(chunk.ids), desc=label, unit="paper", file=sys.stdout)
-            version_bar = (tqdm(total=0, desc=f"{chunk.owner} versions", unit="version", file=sys.stdout)
-                           if cfg.snapshot_group == "multi_version" else None)
+            version_bar = (
+                tqdm(total=0, desc=f"{chunk.owner} versions", unit="version", file=sys.stdout)
+                if cfg.snapshot_group == "multi_version"
+                else None
+            )
 
-            def update_paper_bar(count, total):
-                paper_bar.total = total
-                paper_bar.n = count
-                paper_bar.refresh()
+            def update_paper_bar(count, total, bar=paper_bar):
+                bar.total = total
+                bar.n = count
+                bar.refresh()
 
-            def update_version_bar(count, total):
-                if version_bar is not None:
-                    version_bar.total = total
-                    version_bar.n = count
-                    version_bar.refresh()
+            def update_version_bar(count, total, bar=version_bar):
+                if bar is not None:
+                    bar.total = total
+                    bar.n = count
+                    bar.refresh()
 
             try:
                 while child.poll() is None:
@@ -699,7 +709,9 @@ def run_benchmark(
                         prof / "console.log", console_offset, update_paper_bar, update_version_bar
                     )
                     time.sleep(1)
-                forward_paper_progress(prof / "console.log", console_offset, update_paper_bar, update_version_bar)
+                forward_paper_progress(
+                    prof / "console.log", console_offset, update_paper_bar, update_version_bar
+                )
             except BaseException:
                 # Stop the entire profiler/crawler process tree before checkpointing.
                 try:
