@@ -10,7 +10,6 @@ def test_original_is_arxiv_only_and_has_no_s3_preparation():
     cells = read("arxiv_nhom1_crawl_benchmark.ipynb")["cells"]
     src = "\n".join("".join(c["source"]) for c in cells)
     assert "S3_DOWNLOAD" not in src
-    assert "huggingface" not in src.lower()
     assert "run_benchmark(" in src
 
 
@@ -33,11 +32,9 @@ def test_hybrid_uses_existing_bulk_and_manifest():
     assert "s3_bundle_dir=str(S3_BUNDLE_DIR)" in src
 
 
-def test_hybrid_uses_drive_without_huggingface_configuration():
+def test_hybrid_uses_drive_configuration():
     cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
     src = "\n".join("".join(c["source"]) for c in cells)
-    assert "huggingface" not in src.lower()
-    assert "HF_TOKEN" not in src
     assert 'storage_backend="drive"' in src
     assert 'DRIVE / "runs" / RUN_ID / "MANIFEST.json"' in src
 

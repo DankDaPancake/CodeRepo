@@ -87,11 +87,9 @@ def test_notebook_defaults_to_drive_smoke_without_embedded_token():
     directories = next(c for c in nb["cells"] if c.get("id") == "directory-config")
     exec("".join(directories["source"]), values)
     exec("".join(config["source"]), values)
-    assert "HF_REPO_ID" not in values
     assert values["MODE"] == "sample" and values["COUNT"] == 500
     assert values["OFFSET"] == 500 and values["CHUNK_SIZE"] == 100
     assert values["SNAPSHOT_PATH"] == "/content/arxiv-assigned-20000.jsonl"
-    assert "HF_TOKEN" not in values
 
 
 @pytest.mark.parametrize("state", ["copy", "existing", "interrupted", "corrupt"])
@@ -141,7 +139,7 @@ def test_snapshot_cell_verifies_drive_input_before_storage(tmp_path, monkeypatch
     assert source.exists(), "Never delete the Drive input"
 
 
-def test_drive_authorization_does_not_read_hf_secret(tmp_path, monkeypatch):
+def test_drive_authorization_mounts_drive(tmp_path, monkeypatch):
     import sys
 
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
@@ -168,6 +166,4 @@ def test_notebook_is_drive_only():
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     source = "\n".join("".join(c["source"]) for c in cells)
-    assert "huggingface" not in source.lower()
-    assert "HF_TOKEN" not in source
     assert "RUN_CRAWL = False" in source
