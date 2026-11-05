@@ -169,6 +169,29 @@ python -m src.parser.sample_set --data-root data/corpus --work-dir work --out da
 
 In code: `gather(version_dir)` returns the root file and the `.tex` files reachable through `\input`/`\include`; `expand(version_dir)` returns the root text with every `\input`/`\include` replaced by the included file. Text that LaTeX never typesets (`comment` environments, `\iffalse … \fi`) is dropped first, so its includes are not followed.
 
+## Parser (M2): running the whole corpus
+
+One command parses every paper and every version, in shards, and can be stopped and started again (spec [0005](specs/0005-m2-runner.md)):
+
+```bash
+# 20 papers first, to check the stages and measure the time per paper
+python -m src.parser.run --data-root data/corpus --out-dir data/m2 --work-dir work/m2 --limit 20
+
+# the whole corpus, two processes (the benchmark setting); the crawler's work/ explains empty versions
+python -m src.parser.run --data-root data/corpus --out-dir data/m2 --work-dir work/m2 \
+    --workers 2 --crawl-work-dir work
+
+# only gather + references (no hierarchy, no tables): where the parser will have trouble
+python -m src.parser.run --data-root data/corpus --work-dir work/scan --scan
+python -m src.parser.bibitem data/corpus/2606-30762/v1          # the references of one version
+```
+
+- **Stop and resume:** press Ctrl+C or lose the session, then run *the same command*. A shard (`--shard-papers 100` papers) is renamed to `<out-dir>/shard-NNNNN/` and then recorded in `<work-dir>/shards.jsonl`; papers recorded there are skipped, a half-written shard is deleted. To parse a corpus that grew since, use a new `--out-dir`.
+- **Versions without TeX** are never skipped: `empty` (no `.tex`), `no_root` (no `\documentclass`), `missing` (no `vN/` folder) and `error` are listed in `<work-dir>/m2_versions.csv`, which is the source of the coverage statistics (`m2_papers.csv` has one row per paper).
+- **References** come from `\bibitem` and from the `.bib` files the paper names (`\bibliography`, `\addbibresource`, `filecontents`); only the entries the text cites are kept, as BibTeX prints only those.
+- Stages are the functions named in `src/parser/run.py` (`STAGES`); the runner refuses to start while one cannot be imported. Exit codes: 0 done, 2 another run uses the work directory, 3 a stage is missing, 4 `--verify-done` found a changed paper, 130 interrupted.
+- **Eyeball audit (30 random papers):** `python -m src.qa.audit_sample draw --out-dir data/m2 --work-dir work/m2 --data-root data/corpus --report audit -n 30 --seed 2026` writes one Markdown file per paper (rebuilt tree next to the source path) and a blank score sheet; after reading, `python -m src.qa.audit_sample score audit/audit_sheet.csv --out audit/audit_summary.csv` gives the accuracy per criterion and the error list for the book. `audit/` is git-ignored.
+
 ## References
 
 Online documents the crawler and the gathering code rely on:
