@@ -177,3 +177,23 @@ def test_empty_or_odd_input_gives_an_empty_document():
     assert build_tree("").children == []
     assert build_tree(r"\begin{document}\end{document}").children == []
     assert build_tree(r"\begin{document}\section{Unclosed \begin{figure} oops").kind == "document"
+
+
+def test_template_front_matter_does_not_leak_into_the_sentences():
+    tree = build_tree(
+        r"\begin{document}\preprint{APS/123-QED}\affil[1]{Dept. of X, City.}"
+        r"\authornote{Corresponding.}\subjclass[2020]{Primary 58E20.}"
+        r"\begingroup\footnotetext[1]{Equal contribution.}\endgroup Real text starts here.\qed"
+        r"\end{document}"
+    )
+    assert [c.content for c in tree.children] == ["Real text starts here."]
+
+
+def test_drop_caps_are_joined_and_texorpdfstring_keeps_the_tex_side():
+    tree = build_tree(
+        r"\begin{document}\section{Sensitivity to \texorpdfstring{$T_{max}$}{Tmax}}"
+        r"\IEEEPARstart{A}{ddress} randomisation is common.\end{document}"
+    )
+    (section,) = tree.children
+    assert section.content == "Sensitivity to $T_{max}$"
+    assert section.children[0].content == "Address randomisation is common."

@@ -81,6 +81,8 @@ _FRONT_MATTER = (
     r"title|author|affiliation|address|email|thanks|date|institute|authorrunning|titlerunning|"
     r"keywords|icmltitle|icmlauthor|icmlaffiliation|icmlcorrespondingauthor|icmlkeywords|"
     r"orcid|ead|fnref|corref|printAffiliationsAndNotice|ccsdesc|acmYear|copyrightyear|"
+    r"preprint|authornote|affil|subjclass|footnotetext|altaffiliation|pacs|shorttitle|"
+    r"shortauthors|copyrightclause|conference|journalyear|markright|"
     r"setcopyright|acmDOI|acmISBN|acmConference|acmBooktitle|acmPrice|acmSubmissionID|"
     r"settopmatter|institution|city|country|postcode|streetaddress|receipt|received"
 )
@@ -146,11 +148,31 @@ def _drop_review_macros(text: str) -> str:
     return "".join(out)
 
 
+def _texorpdfstring(text: str) -> str:
+    r"""``\texorpdfstring{$T_{max}$}{Tmax}`` -> ``$T_{max}$`` (the TeX version, braces balanced)."""
+    key = "\\texorpdfstring"
+    while (i := text.find(key)) >= 0:
+        first = text.find("{", i)
+        end_first = match_brace(text, first) if first >= 0 else -1
+        if end_first < 0:
+            return text.replace(key, "")
+        second = end_first
+        while second < len(text) and text[second] in " \t\n":
+            second += 1
+        end_second = match_brace(text, second) if text[second : second + 1] == "{" else end_first
+        text = text[:i] + text[first + 1 : end_first - 1] + text[end_second:]
+    return text
+
+
 def clean_inline(text: str) -> str:
     """One line of prose: the title of a heading, a sentence, an item label."""
     text = _drop_review_macros(text)
     text = strip_formatting(text)
-    text = re.sub(r"\\texorpdfstring\s*\{([^{}]*)\}\s*\{[^{}]*\}", r"\1", text)
+    text = _texorpdfstring(text)
+    # drop caps: \IEEEPARstart{A}{ddress} -> Address
+    text = re.sub(
+        r"\\(?:IEEEPARstart|lettrine)\s*(?:\[[^\]]*\])?\{([^{}]*)\}\s*\{([^{}]*)\}", r"\1\2", text
+    )
     text = re.sub(r"\\\\(?:\[[^\]]*\])?|\\newline(?![A-Za-z])", " ", text)
     text = re.sub(r"\\par(?![A-Za-z])", "\n\n", text)
     text = re.sub(r"\\[,;:! ]|\\[-/]", " ", text)
@@ -384,6 +406,7 @@ def build_tree(text: str) -> Node:
     """The hierarchy of one version; ``text`` is the output of ``normalize`` (or any LaTeX)."""
     body = body_of(text)
     body = drop_command(body, _FRONT_MATTER, args=1)
+    body = drop_command(body, r"markboth", args=2)
     body = drop_command(body, _DEFINITIONS, args=2)
     body = drop_command(body, _NO_PROSE, args=1)
     root = Node("document")

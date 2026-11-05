@@ -95,7 +95,7 @@ _NO_ARG = (
     r"hline|toprule|midrule|bottomrule|hfill|hfil|vfill|vfil|smallskip|medskip|bigskip|"
     r"protect|relax|sloppy|fussy|linebreak|pagebreak|nopagebreak|nolinebreak|"
     r"maketitle|tableofcontents|listoffigures|listoftables|appendix|noappendix|"
-    r"allowbreak|nobreak|break"
+    r"allowbreak|nobreak|break|begingroup|endgroup|onecolumn|qed|qedhere"
 )
 _NO_ARG_RE = re.compile(r"\\(?:" + _NO_ARG + r")(?![A-Za-z])\s*")
 _ONE_ARG = (
