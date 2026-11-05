@@ -2,6 +2,7 @@
 data/
 corpus/
 work/
+audit/
 logs/
 *.src
 *.tar
