@@ -14,13 +14,17 @@ from src.utils.ids import iter_id_range
 
 def split_snapshot(source: Path, output: Path) -> dict:
     """Copy original JSONL records; refuse to overwrite or accept invalid coverage."""
-    names = ("arxiv-assigned-20000.jsonl", "arxiv-assigned-only-v1.jsonl",
-             "arxiv-assigned-multi-version.jsonl")
+    names = (
+        "arxiv-assigned-20000.jsonl",
+        "arxiv-assigned-only-v1.jsonl",
+        "arxiv-assigned-multi-version.jsonl",
+    )
     output.mkdir(parents=True, exist_ok=True)
     if any((output / name).exists() for name in names):
         raise FileExistsError("Output files already exist; select a new directory")
-    wanted = {pid for a, b in config.RANGES.values()
-              for pid in iter_id_range(a, b, config.MONTH_END)}
+    wanted = {
+        pid for a, b in config.RANGES.values() for pid in iter_id_range(a, b, config.MONTH_END)
+    }
     pattern = re.compile(rb'"id"\s*:\s*"([^"\\]+)"')
     found = set()
     full = output / names[0]
@@ -53,6 +57,7 @@ def split_snapshot(source: Path, output: Path) -> dict:
 
 def main():
     import json
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)

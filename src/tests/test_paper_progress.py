@@ -19,10 +19,13 @@ def test_version_progress_tracks_terminal_versions_and_resume(tmp_path, caplog):
 
 def test_forward_version_progress_with_partial_lines(tmp_path):
     from src.benchmark.runner import forward_paper_progress
+
     path = tmp_path / "console.log"
     path.write_bytes(b"VERSION_PROGRESS source_terminal=1/3\nVERSION_PRO")
     versions = []
-    offset = forward_paper_progress(path, 0, lambda *args: None, lambda *args: versions.append(args))
+    offset = forward_paper_progress(
+        path, 0, lambda *args: None, lambda *args: versions.append(args)
+    )
     with path.open("ab") as stream:
         stream.write(b"GRESS source_terminal=2/3\n")
     forward_paper_progress(path, offset, lambda *args: None, lambda *args: versions.append(args))

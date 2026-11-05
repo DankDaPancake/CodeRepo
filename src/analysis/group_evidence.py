@@ -193,8 +193,10 @@ def aggregate_evidence(run_roots, output: Path, *, expected_ids=None) -> dict:
         issues.append("Duplicate run IDs: " + ", ".join(duplicate_runs))
     incompatible = []
     for field in ("code_revision", "snapshot_sha256"):
-        values = {snapshot_origin(m.get(field)) if field == "snapshot_sha256" else m.get(field)
-                  for m in manifests}
+        values = {
+            snapshot_origin(m.get(field)) if field == "snapshot_sha256" else m.get(field)
+            for m in manifests
+        }
         if len(values) != 1 or None in values:
             incompatible.append(field)
     duplicate = sorted(k for k, n in counts.items() if n > 1)

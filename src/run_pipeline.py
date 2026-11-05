@@ -135,9 +135,12 @@ class PaperProgress:
 
     def __init__(self, found, state, data_root):
         self.found, self.state, self.data_root = found, state, data_root
-        self.versions = {(paper, version) for paper, count in found.items()
-                         for version in range(1, count + 1)
-                         if is_done(state.get((paper, version)), data_root)}
+        self.versions = {
+            (paper, version)
+            for paper, count in found.items()
+            for version in range(1, count + 1)
+            if is_done(state.get((paper, version)), data_root)
+        }
         self.complete = {paper for paper in found if self._complete(paper)}
         self._report()
         self._report_versions()
@@ -150,8 +153,11 @@ class PaperProgress:
 
     def record(self, paper):
         old_count = len(self.versions)
-        self.versions.update((paper, v) for v in range(1, self.found.get(paper, 0) + 1)
-                             if is_done(self.state.get((paper, v)), self.data_root))
+        self.versions.update(
+            (paper, v)
+            for v in range(1, self.found.get(paper, 0) + 1)
+            if is_done(self.state.get((paper, v)), self.data_root)
+        )
         if len(self.versions) != old_count:
             self._report_versions()
         if paper in self.complete or not self._complete(paper):
@@ -168,8 +174,12 @@ class PaperProgress:
         )
 
     def _report_versions(self):
-        log.info("VERSION_PROGRESS source_terminal=%d/%d; includes no_tex/unavailable; references separate",
-                 len(self.versions), sum(self.found.values()))
+        log.info(
+            "VERSION_PROGRESS source_terminal=%d/%d; "
+            "includes no_tex/unavailable; references separate",
+            len(self.versions),
+            sum(self.found.values()),
+        )
 
 
 def _publish_parser_job(
