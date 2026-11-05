@@ -42,7 +42,7 @@ from pathlib import Path
 from src import config
 from src.utils.ids import FOLDER_RE, from_folder_name, iter_id_range, to_folder_name
 
-KEEP = config.KEEP_EXTENSIONS
+KEEP = config.ALLOWED_EXTENSIONS  # .tex, .bib and the .bbl fallback (config.BBL_FALLBACK)
 VERSION_DIR_RE = re.compile(r"^v(?P<n>[1-9]\d*)$")
 FINAL_STATUSES = frozenset({"ok", "no_tex", "unavailable"})
 REPORT_FIELDS = ["range_owner", "arxiv_id", "version", "check", "severity", "detail"]

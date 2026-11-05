@@ -166,3 +166,39 @@ def test_old_style_tar_inside_gzip(tmp_path):
     raw[148:156] = b"%06o\x00 " % chksum
     archive = write(tmp_path, "a.src", gzip_bytes(bytes(raw)))
     assert detect_kind(archive) == "tar.gz"
+
+
+BBL = rb"\begin{thebibliography}{1}\bibitem{a} A. Author. A title. 2020.\end{thebibliography}"
+TEX_NO_REFS = rb"\documentclass{article}\begin{document}Text.\end{document}"
+
+
+@pytest.mark.parametrize("kind", ["tar", "zip"])
+def test_bbl_is_kept_when_the_version_has_no_other_reference_source(tmp_path, kind):
+    make = tar_bytes if kind == "tar" else zip_bytes
+    archive = write(tmp_path, "a.src", make({"main.tex": TEX_NO_REFS, "main.bbl": BBL}))
+    res = extract_version(archive, tmp_path / "v1")
+    assert res.files == ["main.bbl", "main.tex"] and res.bbl_fallback == ["main.bbl"]
+    assert (tmp_path / "v1" / "main.bbl").read_bytes() == BBL
+    assert ".bbl" not in res.dropped and res.bytes_after == len(TEX_NO_REFS) + len(BBL)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"main.tex": TEX_NO_REFS, "main.bbl": BBL, "refs.bib": BIB},  # a .bib exists
+        {"main.tex": TEX_NO_REFS + rb"\bibitem{x} Y.", "main.bbl": BBL},  # \bibitem in the .tex
+    ],
+)
+def test_bbl_is_still_dropped_when_references_exist_elsewhere(tmp_path, files):
+    res = extract_version(write(tmp_path, "a.src", tar_bytes(files)), tmp_path / "v1")
+    assert not (tmp_path / "v1" / "main.bbl").exists() and res.bbl_fallback == []
+    assert res.dropped[".bbl"] == {"files": 1, "bytes": len(BBL)}
+
+
+def test_bbl_fallback_can_be_switched_off(tmp_path, monkeypatch):
+    from src import config
+
+    monkeypatch.setattr(config, "BBL_FALLBACK", False)
+    archive = write(tmp_path, "a.src", tar_bytes({"main.tex": TEX_NO_REFS, "main.bbl": BBL}))
+    res = extract_version(archive, tmp_path / "v1")
+    assert res.files == ["main.tex"] and res.dropped[".bbl"]["files"] == 1

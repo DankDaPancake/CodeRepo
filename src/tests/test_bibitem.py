@@ -436,3 +436,31 @@ def test_cli_prints_the_entries(tmp_path, capsys):
     assert main([str(vdir), "--json"]) == 0
     out = capsys.readouterr()
     assert '"citation_key": "a"' in out.out and "1 entries" in out.err
+
+
+def test_a_kept_bbl_is_read_back_when_nothing_else_has_references(tmp_path):
+    (tmp_path / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}Text \cite{a}.\end{document}", encoding="utf-8"
+    )
+    (tmp_path / "main.bbl").write_text(
+        "\\begin{thebibliography}{1}\n\\bibitem{a} A. Author and B. Writer.\n"
+        "\\newblock A title of the paper.\n\\newblock {\\em Journal}, 2020.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+    tex = TexVersion(tmp_path)
+    refs = extract_references(tex, gather(tmp_path).files)
+    assert [e.citation_key for e in refs.entries] == ["a"]
+    assert refs.entries[0].source == "bbl" and refs.entries[0].year == 2020
+    assert refs.bbl_files == ["main.bbl"]
+
+
+def test_a_bbl_is_ignored_when_the_tex_has_its_own_bibitems(tmp_path):
+    (tmp_path / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}\begin{thebibliography}{1}"
+        r"\bibitem{k} A. B. Title. 2001.\end{thebibliography}\end{document}",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.bbl").write_text(r"\bibitem{other} X. Y. Other. 1999.", encoding="utf-8")
+    refs = extract_references(TexVersion(tmp_path), gather(tmp_path).files)
+    assert [e.citation_key for e in refs.entries] == ["k"] and refs.bbl_files == []
