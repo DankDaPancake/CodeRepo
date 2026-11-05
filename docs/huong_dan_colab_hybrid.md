@@ -1,6 +1,6 @@
 # Hướng dẫn chạy crawler hybrid S3 + arXiv trên Colab
 
-Notebook: [`src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Trong lúc PR chưa merge, mở [bản trên nhánh fork bằng Colab](https://colab.research.google.com/github/DankDaPancake/CodeRepo/blob/feat/s3-drive-pipeline/src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Notebook pin `CODE_REF` theo revision triển khai: không đổi revision khi resume.
+Notebook: [`src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Mở [notebook trên main bằng Colab](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/main/src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Notebook pin `CODE_REF` theo revision triển khai: không đổi revision khi resume.
 
 ## 1. Chuẩn bị
 
@@ -18,17 +18,17 @@ Mở notebook từ GitHub, khởi động runtime mới và chạy từng cell t
 ```python
 MODE = "sample"
 RUN_ID = "m1-hybrid-dang-0000-0999-<ten-run-moi>"
-RANGES = ("dang",)
+MEMBER = "dang"  # chọn dang, thien, tien hoặc hieu
+RANGES = (MEMBER,)
 OFFSET = 0
 COUNT = 1000
 CHUNK_SIZE = 100
 WITH_REFERENCES = True
-CHECKPOINT_S = 300
+CHECKPOINT_S = 600
 RESUME = False
-USE_HUGGINGFACE = False  # output Drive
 ```
 
-Thay `RUN_ID` bằng tên mới, chưa tồn tại trên Drive. Đây là sample, không phải final benchmark. `COUNT` và `OFFSET` áp dụng cho từng range được chọn. Snapshot mẫu cho phạm vi này có 700 paper chỉ-v1 và 300 paper nhiều version; phân loại sẽ được tính lại từ file snapshot thực tế.
+Mỗi thành viên chọn `MEMBER` là `dang`, `thien`, `tien` hoặc `hieu`; đặt `RUN_ID` mới tương ứng với tên và khoảng offset, chưa tồn tại trên Drive. `RANGES` được tạo tự động từ `MEMBER`. Đây là sample, không phải final benchmark. `COUNT` và `OFFSET` áp dụng cho từng range được chọn. Snapshot mẫu cho phạm vi này có 700 paper chỉ-v1 và 300 paper nhiều version; phân loại sẽ được tính lại từ file snapshot thực tế.
 
 Trong cell cấu hình S3, ban đầu giữ:
 
@@ -48,7 +48,7 @@ Pipeline phân nhóm theo snapshot, thử S3 cho toàn bộ paper chỉ có v1, 
 
 S3 không gắn nhãn version cho source. Nhóm đã chọn **suy luận v1** khi snapshot chỉ ghi v1 và timestamp bundle muộn hơn ngày v1 ít nhất một ngày. Journal ghi `version_evidence=inferred_snapshot_bundle_timestamp`; đây không phải đối chiếu byte với `/src/idv1`, và phụ thuộc tính đầy đủ của snapshot, đúng ID và thời điểm bundle. Ngày snapshot và bundle phải được nêu khi báo cáo.
 
-`PAPER_PROGRESS` đếm paper có source đạt trạng thái đầu cuối trong chunk; `no_tex` và `unavailable` có thể được tính, còn references theo dõi riêng. `complete=true` theo QA hiện tại không đồng nghĩa mọi version có TeX hoặc mọi reference có metadata. Kiểm tra `work/versions.jsonl`, `work/qa_source.csv`, `work/qa_report.csv`, `book_csv/corpus_summary.csv` và `coverage.json`; phân biệt 404/unavailable, no_tex, failed và references not_found. `final_complete=false` là bình thường đối với sample.
+Thanh tiến độ đếm paper có source đạt trạng thái đầu cuối trong từng pha/chunk; mẫu số sau discovery là số paper tìm thấy; `no_tex` và `unavailable` có thể được tính, còn references và checkpoint theo dõi riêng. Log chi tiết vẫn nằm trong `work/profile/.../console.log`. `complete=true` theo QA hiện tại không đồng nghĩa mọi version có TeX hoặc mọi reference có metadata. Kiểm tra `work/versions.jsonl`, `work/qa_source.csv`, `work/qa_report.csv`, `book_csv/corpus_summary.csv` và `coverage.json`; phân biệt 404/unavailable, no_tex, failed và references not_found. `final_complete=false` là bình thường đối với sample.
 
 Kết quả raw cho M2 nằm ở `MyDrive/arxiv-nhom1/runs/<RUN_ID>/data/corpus/`, theo cây `<paper-id>/metadata.json`, `references.json`, `vN/`. Checkpoint có index; sau khi bị ngắt nên restore generation đã xác minh trước khi coi mirror là trạng thái đã commit.
 

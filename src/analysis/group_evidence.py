@@ -14,6 +14,15 @@ from src.benchmark.measurements import session_report
 from src.utils.ids import iter_id_range
 
 
+def snapshot_origin(fingerprint):
+    """Map only the two byte-verified group subsets to their assigned source."""
+    from src.benchmark.runner import GROUP_SNAPSHOT_HASHES
+
+    if fingerprint in GROUP_SNAPSHOT_HASHES.values():
+        return "033d7bded327d3aa1595f5502ebfc44bcfe353a89a2011b297742d287ba4de15"
+    return fingerprint
+
+
 def assigned_ids() -> set[str]:
     return {
         paper
@@ -184,7 +193,8 @@ def aggregate_evidence(run_roots, output: Path, *, expected_ids=None) -> dict:
         issues.append("Duplicate run IDs: " + ", ".join(duplicate_runs))
     incompatible = []
     for field in ("code_revision", "snapshot_sha256"):
-        values = {m.get(field) for m in manifests}
+        values = {snapshot_origin(m.get(field)) if field == "snapshot_sha256" else m.get(field)
+                  for m in manifests}
         if len(values) != 1 or None in values:
             incompatible.append(field)
     duplicate = sorted(k for k, n in counts.items() if n > 1)

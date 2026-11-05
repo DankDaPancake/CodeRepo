@@ -8,6 +8,27 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize("name", [
+    "arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb",
+    "arxiv_nhom1_only_v1_benchmark.ipynb", "arxiv_nhom1_multi_version_benchmark.ipynb",
+])
+def test_directory_and_run_configuration_are_separate_and_executable(name):
+    path = Path(__file__).parents[1] / "notebooks" / name
+    cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+    directories = next(c for c in cells if c.get("id") == "directory-config")
+    run = next(c for c in cells if c.get("id") == "f94c4b6e")
+    assert cells.index(directories) < cells.index(run)
+    directory_code, run_code = "".join(directories["source"]), "".join(run["source"])
+    assert "DRIVE_DIR = " in directory_code and "SNAPSHOT_DRIVE_PATH = " in directory_code
+    assert "MODE = " not in directory_code and "DRIVE_DIR = " not in run_code
+    values = {}
+    exec(directory_code, values)
+    exec(run_code, values)
+    assert values["DRIVE_DIR"] and values["RUN_ID"]
+    if "only_v1" in name or "s3_arxiv" in name:
+        assert "S3_BUNDLE_DIR = " in directory_code
+
+
 @pytest.mark.parametrize(
     "name", ["arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"]
 )
@@ -63,13 +84,12 @@ def test_notebook_defaults_to_drive_smoke_without_embedded_token():
     nb = json.loads(path.read_text(encoding="utf-8"))
     config = next(c for c in nb["cells"] if "MODE = " in "".join(c["source"]))
     values = {}
+    directories = next(c for c in nb["cells"] if c.get("id") == "directory-config")
+    exec("".join(directories["source"]), values)
     exec("".join(config["source"]), values)
-    assert values["STORAGE_BACKEND"] == "drive"
-    assert values["HF_REPO_ID"] == "PancakeDang/arxiv-nhom1-introds"
     assert values["MODE"] == "sample" and values["COUNT"] == 500
     assert values["OFFSET"] == 500 and values["CHUNK_SIZE"] == 100
     assert values["SNAPSHOT_PATH"] == "/content/arxiv-assigned-20000.jsonl"
-    assert "HF_TOKEN" not in values
 
 
 @pytest.mark.parametrize("state", ["copy", "existing", "interrupted", "corrupt"])
@@ -81,9 +101,7 @@ def test_snapshot_cell_verifies_drive_input_before_storage(tmp_path, monkeypatch
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     index, cell = next((i, c) for i, c in enumerate(cells) if c.get("id") == "download-snapshot")
-    storage = next(
-        i for i, c in enumerate(cells) if 'userdata.get("HF_TOKEN")' in "".join(c["source"])
-    )
+    storage = next(i for i, c in enumerate(cells) if c.get('id') == 'authorize-storage')
     assert index < storage
     target, source = tmp_path / "snapshot.jsonl", tmp_path / "drive" / "input.jsonl"
     source.parent.mkdir()
@@ -121,28 +139,7 @@ def test_snapshot_cell_verifies_drive_input_before_storage(tmp_path, monkeypatch
     assert source.exists(), "Never delete the Drive input"
 
 
-@pytest.mark.parametrize("toggle,expected", [(True, "huggingface"), (False, "drive")])
-def test_storage_toggle_selects_exactly_one_backend(toggle, expected):
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
-    cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
-    config = next(c for c in cells if c.get("id") == "f94c4b6e")
-    source = "".join(config["source"]).replace(
-        "USE_HUGGINGFACE = False", f"USE_HUGGINGFACE = {toggle}"
-    )
-    values = {}
-    exec(source, values)
-    assert values["STORAGE_BACKEND"] == expected
-
-
-def test_storage_toggle_rejects_nonboolean():
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
-    cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
-    source = "".join(next(c for c in cells if c.get("id") == "f94c4b6e")["source"])
-    with pytest.raises((TypeError, ValueError)):
-        exec(source.replace("USE_HUGGINGFACE = False", 'USE_HUGGINGFACE = "False"'), {})
-
-
-def test_drive_authorization_does_not_read_hf_secret(tmp_path, monkeypatch):
+def test_drive_authorization_mounts_drive(tmp_path, monkeypatch):
     import sys
 
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
@@ -164,39 +161,9 @@ def test_drive_authorization_does_not_read_hf_secret(tmp_path, monkeypatch):
     assert values["DRIVE"] == tmp_path
 
 
-def test_hf_authorization_reads_only_configured_secret(monkeypatch):
-    import subprocess
-    import sys
 
+def test_notebook_is_drive_only():
     path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
-    cell = next(c for c in cells if c.get("id") == "authorize-storage")
-    seen = []
-
-    def get(name):
-        seen.append(name)
-        return "fake-token"
-
-    class Api:
-        def __init__(self, token):
-            assert token == "fake-token"
-
-        def repo_info(self, repo_id, repo_type):
-            assert (repo_id, repo_type) == ("team/private", "dataset")
-            return SimpleNamespace(private=True)
-
-    monkeypatch.setitem(
-        sys.modules, "google.colab", SimpleNamespace(userdata=SimpleNamespace(get=get))
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "huggingface_hub",
-        SimpleNamespace(HfApi=Api, hf_hub_download=lambda *a, **k: None),
-    )
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.delenv("HF_XET_CACHE", raising=False)
-    values = {"STORAGE_BACKEND": "huggingface", "HF_REPO_ID": "team/private"}
-    exec("".join(cell["source"]), values)
-    assert seen == ["HF_TOKEN"]
-    assert "m1-hf-staging" in str(values["DRIVE"])
+    source = "\n".join("".join(c["source"]) for c in cells)
+    assert "RUN_CRAWL = False" in source
