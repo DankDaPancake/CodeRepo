@@ -44,7 +44,7 @@ def test_hybrid_uses_drive_without_huggingface_configuration():
 
 def test_hybrid_member_selection_and_checkpoint_defaults():
     cells = read("arxiv_nhom1_s3_arxiv_benchmark.ipynb")["cells"]
-    src = "".join(cells[1]["source"])
+    src = "".join(next(c for c in cells if c.get("id") == "f94c4b6e")["source"])
     assert 'RANGES = ("thien", "tien", "hieu", "dang")' in src
     assert "COUNT = 1000" in src
     assert "CHECKPOINT_S = 600" in src

@@ -8,6 +8,27 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize("name", [
+    "arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb",
+    "arxiv_nhom1_only_v1_benchmark.ipynb", "arxiv_nhom1_multi_version_benchmark.ipynb",
+])
+def test_directory_and_run_configuration_are_separate_and_executable(name):
+    path = Path(__file__).parents[1] / "notebooks" / name
+    cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+    directories = next(c for c in cells if c.get("id") == "directory-config")
+    run = next(c for c in cells if c.get("id") == "f94c4b6e")
+    assert cells.index(directories) < cells.index(run)
+    directory_code, run_code = "".join(directories["source"]), "".join(run["source"])
+    assert "DRIVE_DIR = " in directory_code and "SNAPSHOT_DRIVE_PATH = " in directory_code
+    assert "MODE = " not in directory_code and "DRIVE_DIR = " not in run_code
+    values = {}
+    exec(directory_code, values)
+    exec(run_code, values)
+    assert values["DRIVE_DIR"] and values["RUN_ID"]
+    if "only_v1" in name or "s3_arxiv" in name:
+        assert "S3_BUNDLE_DIR = " in directory_code
+
+
 @pytest.mark.parametrize(
     "name", ["arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"]
 )
@@ -63,6 +84,8 @@ def test_notebook_defaults_to_drive_smoke_without_embedded_token():
     nb = json.loads(path.read_text(encoding="utf-8"))
     config = next(c for c in nb["cells"] if "MODE = " in "".join(c["source"]))
     values = {}
+    directories = next(c for c in nb["cells"] if c.get("id") == "directory-config")
+    exec("".join(directories["source"]), values)
     exec("".join(config["source"]), values)
     assert "HF_REPO_ID" not in values
     assert values["MODE"] == "sample" and values["COUNT"] == 500
