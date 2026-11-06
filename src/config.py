@@ -27,8 +27,13 @@ USER_AGENT = "HCMUS-IntroDS-Group01-crawler/0.1 (university course project{})".f
 )
 
 # Statement M1: "extract only the .tex and .bib files from each source archive".
-# The team plan proposes also keeping .bbl: override with --keep-ext once the team decides.
 KEEP_EXTENSIONS = frozenset({".tex", ".bib"})
+# Lecturer's answer (QA sheet, Milestone 1): a paper with no .bib and no \bibitem in its .tex
+# but a .bbl keeps the .bbl, so that its references are not lost; M2 turns it back into BibTeX.
+# Every other .bbl is still left out. False restores the strict "only .tex and .bib" rule.
+BBL_FALLBACK = True
+BBL_MAX_BYTES = 8 * 1024 * 1024  # a larger .bbl is not a reference list
+ALLOWED_EXTENSIONS = KEEP_EXTENSIONS | ({".bbl"} if BBL_FALLBACK else frozenset())
 
 DEFAULT_DATA_ROOT = os.environ.get("DATA_ROOT", "data/corpus")
 DEFAULT_WORK_DIR = os.environ.get("WORK_DIR", "work")

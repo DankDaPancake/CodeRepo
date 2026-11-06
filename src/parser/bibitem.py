@@ -18,6 +18,9 @@ What is extracted
 - ``parse_bib(text)``: a ``.bib`` file. M1 keeps ``.bib`` but not ``.bbl``, so a paper that
   uses BibTeX has its references *only* there; without it the ``bibtex`` table would be empty
   for most papers.
+- A ``.bbl`` (BibTeX's output, a ``\\bibitem`` list) is read only when the version has no other
+  reference source: the crawler keeps it exactly in that case (lecturer's answer, QA sheet), and
+  ``parse_bibitems`` turns it back into BibTeX rows (``source="bbl"``).
 - ``extract_references(tex, files)``: both, for one gathered version. A ``.bib`` is read only
   if the compilation path names it (``\\bibliography`` / ``\\addbibresource``) or embeds it
   (``filecontents``), and only its *cited* entries are kept (all with ``\\nocite{*}``): BibTeX
@@ -41,7 +44,7 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from src.parser.gather import TexVersion, gather, paper_title, strip_comments
+from src.parser.gather import TexVersion, gather, paper_title, read_tex, strip_comments
 
 # --------------------------------------------------------------------------- data
 
@@ -80,6 +83,7 @@ class BibEntry:
 class VersionRefs:
     entries: list[BibEntry] = field(default_factory=list)
     bib_files: list[str] = field(default_factory=list)  # .bib files that were read
+    bbl_files: list[str] = field(default_factory=list)  # .bbl files read (no other source)
     missing_bib: list[str] = field(
         default_factory=list
     )  # named by \bibliography, not in the folder
@@ -942,6 +946,14 @@ def extract_references(tex: TexVersion, files: list[str]) -> VersionRefs:
                     seen.add(entry.citation_key)
                 else:
                     refs.n_bib_unused += 1
+    if not refs.entries:  # nothing else: a .bbl kept by the crawler for exactly this case
+        for path in sorted(tex.dir.rglob("*.bbl")):
+            found = parse_bibitems(read_tex(path))
+            for entry in found:
+                entry.source = "bbl"
+            refs.entries.extend(found)
+            refs.n_bibitems += len(found)
+            refs.bbl_files.append(path.relative_to(tex.dir).as_posix())
     return refs
 
 
