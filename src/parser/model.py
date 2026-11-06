@@ -32,6 +32,33 @@ ERROR = "error"  # a stage raised on this version
 MISSING = "missing"  # no vN/ folder at all (crawl failed or unfinished): not passed to ``dedup``
 
 
+# Kinds of the ``kind`` column of ``elements``. Branches have children; leaves do not.
+DOCUMENT = "document"
+BRANCH_KINDS = frozenset(
+    {"chapter", "section", "subsection", "subsubsection", "paragraph", "itemize", "item"}
+)
+LEAF_KINDS = frozenset({"sentence", "equation", "figure"})  # a table is a figure (statement)
+
+
+@dataclass
+class Node:
+    """One element of the hierarchy of a version, as ``build_tree`` returns it.
+
+    ``content`` is the heading text of a branch (empty for ``itemize`` and ``item``), the
+    cleaned LaTeX of a leaf. Children are in document order.
+    """
+
+    kind: str
+    content: str = ""
+    children: list[Node] = field(default_factory=list)
+
+    def walk(self):
+        """This node and every descendant, depth first, in document order."""
+        yield self
+        for child in self.children:
+            yield from child.walk()
+
+
 @dataclass
 class VersionParse:
     """What ``dedup`` gets for one version of a paper."""

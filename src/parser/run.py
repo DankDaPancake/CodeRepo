@@ -99,11 +99,11 @@ STAGING = ".staging"
 RECYCLE_AFTER = 500  # papers per worker process before it is replaced (bounds memory growth)
 VERSION_COLUMNS = (
     "arxiv_id version status reason crawl_status root n_files n_unused n_other_roots "
-    "n_missing_includes n_bibitems n_bib_cited n_bib_unused missing_bib secs"
+    "n_missing_includes n_bibitems n_bbl n_bib_cited n_bib_unused missing_bib n_nodes n_refs secs"
 ).split()
 PAPER_COLUMNS = (
     "arxiv_id shard n_versions n_parsed n_empty n_no_root n_missing n_error error "
-    "elements hierarchy bibtex elapsed_s"
+    "elements hierarchy bibtex elements_before bibtex_before elapsed_s"
 ).split()
 
 
@@ -223,6 +223,13 @@ def _short(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"[:300]
 
 
+def _count_nodes(tree) -> int | None:
+    """Elements of a version before deduplication: every node below the document root."""
+    if hasattr(tree, "walk"):
+        return sum(1 for _ in tree.walk()) - 1
+    return len(tree) if isinstance(tree, list | tuple) else None
+
+
 def _parse_version(
     vdir: Path, title: str | None, version: int, options: Options, crawl: dict | None
 ) -> tuple[dict, VersionParse | None]:
@@ -255,9 +262,12 @@ def _parse_version(
             status=PARSED,
             root=found.root,
             n_bibitems=refs.n_bibitems,
+            n_bbl=len(getattr(refs, "bbl_files", ())),
             n_bib_cited=refs.n_bib_cited,
             n_bib_unused=refs.n_bib_unused,
             missing_bib=";".join(refs.missing_bib) or None,
+            n_nodes=_count_nodes(tree),
+            n_refs=len(refs.entries),
         )
         return info, VersionParse(version, PARSED, tree, refs.entries)
     except Exception as exc:  # one bad version must not cost the paper or the run
@@ -478,6 +488,8 @@ def export_csv(work_dir: Path, papers: dict[str, dict]) -> None:
                 "error": rec["error"],
                 "elapsed_s": rec["elapsed_s"],
                 **rec["rows"],
+                "elements_before": sum(v.get("n_nodes") or 0 for v in rec["versions"]),
+                "bibtex_before": sum(v.get("n_refs") or 0 for v in rec["versions"]),
             }
         )
         version_rows.extend({**v, "arxiv_id": arxiv_id} for v in rec["versions"])
