@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import errno
 import gzip
+import io
 import os
 import shutil
 import stat
@@ -71,6 +72,9 @@ class ExtractResult:
     # Files left out by the whitelist: extension (".png", "" when none) or, for a source
     # without any archive member, "(pdf)" / "(html.gz)"... -> {"files": n, "bytes": size}.
     dropped: dict[str, dict[str, int]] = field(default_factory=dict)
+    bbl_fallback: list[str] = field(default_factory=list)  # .bbl kept for want of any .bib/\bibitem
+    # .bbl members held back until the whole archive is seen: relative path -> bytes
+    _pending_bbl: dict[PurePosixPath, bytes] = field(default_factory=dict, repr=False)
 
     def drop(self, key: str, size: int) -> None:
         entry = self.dropped.setdefault(key, {"files": 0, "bytes": 0})
@@ -240,6 +244,46 @@ def _keep(rel: PurePosixPath, keep_extensions: Iterable[str]) -> bool:
     return rel.suffix.lower() in keep_extensions
 
 
+def _defer_bbl(res: ExtractResult, rel: PurePosixPath, size: int, read) -> bool:
+    """Hold a ``.bbl`` member back until the whole archive has been seen (config.BBL_FALLBACK).
+
+    Whether it is kept depends on the other files, which a stream has not reached yet.
+    """
+    if not config.BBL_FALLBACK or rel.suffix.lower() != ".bbl" or size > config.BBL_MAX_BYTES:
+        return False
+    res._pending_bbl[rel] = read()
+    return True
+
+
+def _settle_bbl(out_dir: Path, res: ExtractResult) -> None:
+    """Keep the held ``.bbl`` files only if the version has no other source of references.
+
+    The lecturer's rule: a paper with no ``.bib`` and no ``\\bibitem`` in its kept ``.tex`` but a
+    ``.bbl`` keeps the ``.bbl``, so that its reference list is not lost (M2 reads it back).
+    """
+    pending, res._pending_bbl = res._pending_bbl, {}
+    if not pending:
+        return
+    has_bib = any(f.lower().endswith(".bib") for f in res.files)
+    has_bibitem = False
+    if not has_bib:
+        for name in res.files:
+            if name.lower().endswith(".tex"):
+                try:
+                    if b"\\bibitem" in (out_dir / name).read_bytes():
+                        has_bibitem = True
+                        break
+                except OSError:
+                    continue
+    for rel, data in sorted(pending.items()):
+        if has_bib or has_bibitem or not _write_member(io.BytesIO(data), out_dir, rel):
+            res.drop(".bbl", len(data))
+            continue
+        res.bytes_after += len(data)
+        res.files.append(rel.as_posix())
+        res.bbl_fallback.append(rel.as_posix())
+
+
 # --------------------------------------------------------------------------- extractors
 
 
@@ -260,7 +304,11 @@ def _extract_tar(src, out_dir: Path, keep: frozenset[str], res: ExtractResult) -
                     res.skipped_unsafe += 1
                     continue
                 if not _keep(rel, keep):
-                    res.drop(rel.suffix.lower(), member.size)
+                    held = _defer_bbl(
+                        res, rel, member.size, lambda m=member: tf.extractfile(m).read()
+                    )
+                    if not held:
+                        res.drop(rel.suffix.lower(), member.size)
                     continue
                 src = tf.extractfile(member)
                 if src is None:
@@ -290,7 +338,8 @@ def _extract_zip(archive: Path, out_dir: Path, keep: frozenset[str], res: Extrac
                     res.skipped_unsafe += 1
                     continue
                 if not _keep(rel, keep):
-                    res.drop(rel.suffix.lower(), info.file_size)
+                    if not _defer_bbl(res, rel, info.file_size, lambda i=info: zf.read(i)):
+                        res.drop(rel.suffix.lower(), info.file_size)
                     continue
                 with zf.open(info) as src:
                     if not _write_member(src, out_dir, rel):
@@ -405,6 +454,7 @@ def extract_stream(
         res.bytes_before = res.archive_bytes
         if res.archive_bytes:
             res.drop(f"({res.kind})", res.archive_bytes)
+    _settle_bbl(out_dir, res)
     res.files.sort()
     res.has_tex = any(f.lower().endswith(".tex") for f in res.files)
     return res

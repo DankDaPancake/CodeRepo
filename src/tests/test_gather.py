@@ -3,7 +3,16 @@ import json
 
 import pytest
 
-from src.parser.gather import TexVersion, expand, gather, iter_version_dirs, main, strip_comments
+from src.parser.gather import (
+    MAX_INCLUDE_DEPTH,
+    TexVersion,
+    drop_disabled,
+    expand,
+    gather,
+    iter_version_dirs,
+    main,
+    strip_comments,
+)
 
 DOC = "\\documentclass{article}\n\\title{%s}\n\\begin{document}\n%s\n\\end{document}\n"
 
@@ -183,3 +192,56 @@ def test_cli_over_a_corpus(tmp_path, capsys):
     assert summary["with_root"] == summary["multi_file"] == 1
     assert summary["ambiguous_root"] == summary["no_root_with_tex"] == 0
     assert len(out.read_text(encoding="utf-8").splitlines()) == 2
+
+
+# ---------------------------------------------------------------- text LaTeX never typesets
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("a\\begin{comment}X\\end{comment}b", "ab"),
+        ("a\\iffalse X \\fi b", "a b"),
+        ("a\\iffalse X \\else Y \\fi b", "a Y  b"),  # the \else branch is typeset
+        ("a\\iffalse \\ifnum1=1 X \\else Z \\fi W \\fi b", "a b"),  # nested conditionals
+        ("a\\iffalse X \\else \\ifx\\a\\b Y\\fi Z \\fi b", "a \\ifx\\a\\b Y\\fi Z  b"),
+        ("a\\iffalse X \\ifthenelse{A}{B}{C} Y \\fi b", "a b"),  # \ifthenelse has no \fi
+        ("p \\iff q \\iffalse X \\fi", "p \\iff q "),  # "\iff" is the math arrow
+        ("% \\iffalse\nkeep \\fi", "% \\iffalse\nkeep \\fi"),  # inside a % comment: plain text
+        ("\\let\\ifdraft\\iffalse text \\fi", "\\let\\ifdraft\\iffalse text \\fi"),
+        ("a\\iffalse never closed", "a\\iffalse never closed"),
+        ("a\\begin{comment} never closed", "a\\begin{comment} never closed"),
+        ("no markers at all", "no markers at all"),
+    ],
+)
+def test_drop_disabled(text, expected):
+    assert drop_disabled(text) == expected
+
+
+def test_includes_inside_disabled_blocks_are_not_followed(tmp_path):
+    body = (
+        "\\begin{comment}\n\\input{old}\n\\end{comment}\n"
+        "\\iffalse \\input{older} \\else \\input{kept} \\fi\n\\input{new}"
+    )
+    vdir = version(
+        tmp_path,
+        {
+            "main.tex": DOC % ("T", body),
+            **{f"{n}.tex": n for n in ("old", "older", "kept", "new")},
+        },
+    )
+    res = gather(vdir)
+    assert res.files == ["main.tex", "kept.tex", "new.tex"]
+    assert sorted(res.unused) == ["old.tex", "older.tex"]
+    text = expand(vdir)
+    assert "old" not in text and "kept" in text and "new" in text
+
+
+def test_a_nested_chain_deeper_than_tex_allows_is_cut_without_recursion_error(tmp_path):
+    n = MAX_INCLUDE_DEPTH + 60
+    files = {"main.tex": DOC % ("T", "\\input{f0}"), f"f{n}.tex": "End."}
+    files.update({f"f{i}.tex": f"\\input{{f{i + 1}}}" for i in range(n)})
+    vdir = version(tmp_path, files)
+    res = gather(vdir)
+    assert len(res.files) == MAX_INCLUDE_DEPTH and res.missing  # followed, then cut
+    assert expand(vdir).startswith("\\documentclass")  # no RecursionError
