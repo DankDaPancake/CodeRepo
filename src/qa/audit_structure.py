@@ -40,6 +40,7 @@ from src.parser.hierarchy import (
     REFERENCE_TITLES,
 )
 from src.parser.normalize import _end_of_env, drop_command, match_brace, strip_formatting
+from src.parser.run import as_paths
 from src.utils.ids import to_folder_name
 
 _HEADING = re.compile(
@@ -119,7 +120,7 @@ def count_tree(rows: list[dict]) -> dict[str, int]:
     }
 
 
-def audit(data_root: Path, out_dir: Path) -> list[dict]:
+def audit(data_root, out_dir: Path) -> list[dict]:
     elements: dict[str, dict] = {}
     edges: dict[tuple, list[str]] = {}
     for shard in sorted(Path(out_dir).glob("shard-*")):
@@ -129,7 +130,14 @@ def audit(data_root: Path, out_dir: Path) -> list[dict]:
             edges.setdefault((row["arxiv_id"], row["version"]), []).append(row["element_id"])
     results = []
     for (arxiv_id, version), ids in sorted(edges.items()):
-        vdir = Path(data_root) / to_folder_name(arxiv_id) / f"v{version}"
+        vdir = next(
+            (
+                root / to_folder_name(arxiv_id) / f"v{version}"
+                for root in as_paths(data_root)
+                if (root / to_folder_name(arxiv_id)).is_dir()
+            ),
+            Path("/nonexistent"),
+        )
         if not vdir.is_dir():
             continue
         tex = TexVersion(vdir, paper_title(vdir))
@@ -148,7 +156,7 @@ def audit(data_root: Path, out_dir: Path) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, action="append", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--report", type=Path, default=Path("audit"))
     args = parser.parse_args(argv)

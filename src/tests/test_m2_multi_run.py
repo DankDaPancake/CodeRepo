@@ -103,6 +103,21 @@ def test_one_run_over_two_roots_gives_valid_tables_for_every_paper(two_runs, tmp
     assert report["papers"] == 4 and report["versions"] == 5
 
 
+def test_the_audits_find_each_paper_in_whichever_run_holds_it(two_runs, tmp_path):
+    from src.qa.audit_sample import draw
+    from src.qa.audit_structure import audit
+
+    a, b = two_runs
+    out, work = tmp_path / "out", tmp_path / "work"
+    run([a, b], out, work, options=Options(), progress=False)
+    rows = audit([a, b], out)
+    assert {r["arxiv_id"] for r in rows} == {"2606.00001", "2606.00002", "2606.00004"}
+    assert all(r["headings_agree"] == 1 for r in rows)
+    draw(out, work, tmp_path / "audit", 3, 1, [a, b])
+    text = "".join(p.read_text(encoding="utf-8") for p in (tmp_path / "audit").glob("*.md"))
+    assert str(a) in text and str(b) in text  # the source path points into the right run
+
+
 def test_expect_assigned_stops_unless_the_corpus_is_exactly_the_assigned_ids(
     two_runs, tmp_path, monkeypatch
 ):
