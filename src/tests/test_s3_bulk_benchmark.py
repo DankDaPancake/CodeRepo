@@ -29,6 +29,14 @@ def test_plan_includes_overlapping_and_later_month_bundles():
     assert missing == [ids[2]]
 
 
+def test_old_style_nineties_bundles_are_older_than_modern_ids():
+    legacy = bundle("src/arXiv_src_9107_001.tar", "hep-lat9107001", "hep-lat9107002")
+    modern = bundle("src/arXiv_src_2604_001.tar", "2604.20535", "2604.20535")
+    selected, _, missing = plan_candidates([legacy, modern], ["2604.20535"])
+    assert [b.key for b in selected] == [modern.key]
+    assert not missing
+
+
 def test_snapshot_coverage_rejects_duplicates_and_extras(tmp_path):
     path = tmp_path / "snapshot.jsonl"
     path.write_text(

@@ -88,8 +88,16 @@ def plan_candidates(bundles, ids: list[str]):
         month = re.fullmatch(r"src/arXiv_src_(\d{4})_\d+\.tar", item.key)
         if not month:
             raise ValueError(f"Unsupported bundle key: {item.key}")
+
+        # arXiv starts in 1991: 91–99 are 1900s, whereas modern IDs use 2000s.
+        def chronological(yymm):
+            year, month_number = divmod(int(yymm), 100)
+            if not 1 <= month_number <= 12:
+                raise ValueError(f"Invalid arXiv month: {yymm}")
+            return (1900 if year >= 91 else 2000) * 100 + year * 100 + month_number
+
         # A bundle published before the ID's submission month cannot contain it.
-        if int(month[1]) < keys[0][0]:
+        if chronological(month[1]) < chronological(keys[0][0]):
             continue
         first, last = _id(item.first), _id(item.last)
         if first > last:
