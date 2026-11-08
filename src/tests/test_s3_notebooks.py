@@ -18,7 +18,8 @@ def test_hybrid_notebook_partitions_before_planning_and_requires_explicit_crawl(
     src = "\n".join("".join(c["source"]) for c in cells)
     assert "partition_snapshot(" in src
     assert "partition.only_v1" in src
-    assert "S3_DOWNLOAD = False" in src
+    assert "S3_DOWNLOAD" not in src
+    assert "download_bundle" not in src
     assert 'source_mode="arxiv_s3"' in src
     assert "RUN_CRAWL = False" in src
     assert src.index("partition_snapshot(") < src.index("select_bundles(")
@@ -52,3 +53,27 @@ def test_hybrid_missing_bundle_goes_to_arxiv_fallback():
     source = "".join(next(c for c in cells if c.get("id") == "3e980f1a")["source"])
     assert "missing bundles will use arXiv fallback" in source
     assert "raise FileNotFoundError" not in source
+
+
+def test_only_v1_has_no_aws_download_and_keeps_preflight():
+    src = "\n".join(
+        "".join(c["source"]) for c in read("arxiv_nhom1_only_v1_benchmark.ipynb")["cells"]
+    )
+    assert "download_bundle" not in src and "S3_DOWNLOAD" not in src
+    assert "select_bundles(" in src and "missing bundles will use arXiv fallback" in src
+
+
+def test_s3_preflight_restores_manifest_and_bundle_paths_on_resume():
+    for name in ("arxiv_nhom1_only_v1_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"):
+        source = "\n".join("".join(c["source"]) for c in read(name)["cells"])
+        assert 'saved["config"]["s3_manifest"]' in source
+        assert 'saved["config"]["s3_bundle_dir"]' in source
+
+
+def test_download_notebook_defaults_to_all_ids_and_preview():
+    src = "\n".join(
+        "".join(c["source"]) for c in read("arxiv_nhom1_s3_download_benchmark.ipynb")["cells"]
+    )
+    assert "DOWNLOAD = False" in src
+    assert "validate_snapshot(" in src and "plan_candidates(" in src
+    assert "20000" in src and "RequestPayer" not in src  # requester pays handled in helper
