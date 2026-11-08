@@ -8,7 +8,7 @@ Notebook: [`src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/notebook
 - Snapshot đã lọc cho 20.000 ID ở `MyDrive/arxiv-inputs/arxiv-assigned-20000.jsonl`; notebook kiểm tra SHA-256 trước khi dùng. Đường dẫn có thể chỉnh ở `SNAPSHOT_DRIVE_PATH`.
 - Bulk có sẵn ở `MyDrive/arxiv-s3/packages/`; manifest của lần tải ở `MyDrive/arxiv-s3/runs/20261102-135934/manifest.xml`. Nếu folder được chia sẻ nằm nơi khác, thêm shortcut vào My Drive hoặc sửa `S3_BUNDLE_DIR` và `S3_EXISTING_MANIFEST` cho đúng đường dẫn mount. Không xóa hay sửa bulk trong lúc chạy.
 - Tạo sẵn thư mục kết quả `MyDrive/arxiv-nhom1/`. Nếu đây là thư mục mới chưa có `TEAM.json`, đặt `INITIALIZE_TEAM_FOLDER = True` ở cell đầu, chạy lại cell cấu hình và cell tạo `BenchmarkConfig`; sau khi khởi tạo có thể trả về `False`. Không thay `TEAM_ID` khi resume.
-- Nếu chỉ dùng manifest và bulk đã có, giữ `S3_DOWNLOAD = False`: không cần AWS key hoặc request S3. Nếu cần tải bundle còn thiếu, thiết lập `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` và, chỉ với credentials tạm, `AWS_SESSION_TOKEN` trong Colab Secrets 🔑; bật Notebook access. S3 Requester Pays có thể phát sinh phí. Không đưa key vào notebook, repo, log hoặc chat.
+- Notebook crawl dùng manifest và bulk đã có, không cần AWS key hoặc request S3. Để tải bundle còn thiếu, xem [hướng dẫn notebook tải bulk](huong_dan_tai_s3_bulk.md); Requester Pays có thể phát sinh phí.
 - Semantic Scholar dùng `S2_API_KEY` trong Colab Secrets nếu nhóm có key; thiếu key có thể dẫn tới chậm/429. `ARXIV_CONTACT_EMAIL` là cấu hình liên hệ tùy chọn.
 
 ## 2. Chạy smoke 1.000 ID của Đăng
@@ -34,11 +34,10 @@ Trong cell cấu hình S3, ban đầu giữ:
 
 ```python
 PREPARE_S3 = True
-S3_DOWNLOAD = False
 RUN_CRAWL = False
 ```
 
-Chạy lần lượt đến cell chuẩn bị S3: kiểm tra số paper từng nhóm, các bundle ứng viên, ID không nằm trong khoảng manifest và đường dẫn Drive. Notebook in kích thước manifest và kích thước thực; hai số có thể khác. Trước khi index, code tính MD5 của **từng bundle** và từ chối checksum không khớp. Nếu bundle thiếu, chuẩn bị lại hoặc bật tải sau khi đã xem khối lượng và chi phí; không tự đổi tên `.part` thành `.tar`.
+Chạy lần lượt đến cell chuẩn bị S3: kiểm tra số paper từng nhóm, các bundle ứng viên, ID không nằm trong khoảng manifest và đường dẫn Drive. Notebook in kích thước manifest và kích thước thực; hai số có thể khác. Trước khi index, code tính MD5 của **từng bundle** và từ chối checksum không khớp. Nếu bundle thiếu, dùng notebook tải bulk riêng sau khi xem khối lượng và chi phí; không tự đổi tên `.part` thành `.tar`.
 
 Sau khi kiểm tra, đổi `RUN_CRAWL = True`, chạy lại cell cấu hình S3, rồi chạy cell **Crawl, checkpoint and benchmark**. Không cần chạy lại bước tải. Theo dõi các pha `s3` → `fallback` → `multi_version` và thông báo checkpoint. Không dùng **Run all** nếu chưa muốn bắt đầu crawl.
 
