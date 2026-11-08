@@ -52,13 +52,15 @@ def test_the_notebook_does_the_steps_in_order(cells):
         "restore-corpora",
         "benchmark",
         "verify",
+        "m1-stats",
         "export",
     ]
     ids = [c.get("id") for c in cells]
     assert [ids.index(i) for i in order] == sorted(ids.index(i) for i in order)
     for needle in ("Checkpoints(", "--expect-assigned", "src.benchmark.m2_benchmark",
                    "sync_to_drive(", "restore_from_drive(", "src.qa.check_tables",
-                   "src.qa.audit_structure", "src.qa.audit_sample"):  # fmt: skip
+                   "src.qa.audit_structure", "src.qa.audit_sample",
+                   "src.analysis.stats"):  # fmt: skip
         assert needle in src, needle
 
 

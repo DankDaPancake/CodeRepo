@@ -97,6 +97,7 @@ def paper_timing_report(work_dirs: list[Path], ids: list[str]) -> tuple[list[dic
 
 
 def session_exports(work_dirs: list[Path], data: Path, n_ids: int) -> tuple[list, list, dict]:
+    roots = [data] if isinstance(data, str | Path) else list(data)  # one corpus or several runs
     reports, samples, offset = [], [], 0.0
     for work in dict.fromkeys(w.resolve() for w in work_dirs):
         report, rows = session_report(work.parent)
@@ -132,7 +133,7 @@ def session_exports(work_dirs: list[Path], data: Path, n_ids: int) -> tuple[list
         ("ram_mean", mean / duration / 1e6 if duration else None, "MB"),
         ("disk_max", max(r["disk_max_bytes"] for r in reports) / 1e6, "MB"),
         ("disk_free_min", min(r["disk_free_min_bytes"] for r in reports), "bytes"),
-        ("output_size", dir_size(data) / 1e6, "MB"),
+        ("output_size", sum(dir_size(d) for d in roots) / 1e6, "MB"),
     ]
     if complete:
         metrics += [

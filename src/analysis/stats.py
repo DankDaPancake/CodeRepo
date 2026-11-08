@@ -99,8 +99,13 @@ def load_discovery(work_dirs: list[Path]) -> dict[str, dict]:
 # --------------------------------------------------------------------------- papers
 
 
-def paper_row(arxiv_id: str, data_root: Path, state: dict) -> dict:
-    folder = data_root / to_folder_name(arxiv_id)
+def paper_row(arxiv_id: str, data_root, state: dict) -> dict:
+    """One row; data_root is a corpus folder or the folders of several crawl runs."""
+    roots = [data_root] if isinstance(data_root, str | Path) else list(data_root)
+    name = to_folder_name(arxiv_id)
+    folder = next(
+        (Path(r) / name for r in roots if (Path(r) / name).is_dir()), Path(roots[0]) / name
+    )
     row = dict.fromkeys(PAPER_COLUMNS, 0)
     row.update(
         arxiv_id=arxiv_id,
@@ -437,7 +442,12 @@ def main(argv: list[str] | None = None) -> int:
     which = parser.add_mutually_exclusive_group()
     which.add_argument("--range", choices=sorted(config.RANGES))
     which.add_argument("--ids", help="comma-separated IDs")
-    parser.add_argument("--data-root", type=Path, default=Path(config.DEFAULT_DATA_ROOT))
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        action="append",
+        help="corpus folder; repeat for the runs of a distributed crawl",
+    )
     parser.add_argument("--work-dir", type=Path, action="append", help="repeatable")
     parser.add_argument(
         "--profile-dir",
@@ -450,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True, help="e.g. ../arxiv-book/data/m1")
     args = parser.parse_args(argv)
     work_dirs = args.work_dir or [Path(config.DEFAULT_WORK_DIR)]
+    args.data_root = args.data_root or [Path(config.DEFAULT_DATA_ROOT)]
 
     ids = select_ids(args, work_dirs)
     state: dict = {}
