@@ -58,3 +58,13 @@ Per paper, in order; `Rows` is `{"elements": [...], "hierarchy": [...], "bibtex"
 - **Parquet:** zstd, `kind` and `entry_type` dictionary-encoded, `authors` a list of strings, `year` and `version` int32.
 - **`.bbl`:** the crawler keeps a `.bbl` only for a version with no `.bib` and no `\bibitem` (lecturer's answer, QA sheet, Milestone 1); `bibitem.extract_references` reads it when nothing else yields references.
 - **New statistics columns:** `n_nodes`, `n_refs`, `n_bbl` per version and `elements_before`, `bibtex_before` per paper.
+
+## The whole corpus: several runs, one corpus (2026-11-08)
+
+The group crawl is five partitions (`only-v1-all`, `multi-{dang,hieu,thien,tien}-0000-4999`), each a Drive checkpoint with its own `data/corpus` and `work/versions.jsonl`.
+
+- `--data-root` and `--crawl-work-dir` may be repeated. Papers are listed in folder-name order across the roots, so shards do not depend on the order of the roots; a paper in two roots stops the run (exit code 5).
+- `--expect-assigned` stops (exit code 5) unless the papers found are exactly the IDs of `config.RANGES` (20,000); `work/assigned_check.json` lists the missing and the extra ones.
+- `src.benchmark.m2_benchmark` adds the sessions of a resumed benchmark up (`m2_sessions.jsonl`, `session_id` in the time series) and reports `input_size` and `disk_max` (input plus the peak of output and work).
+- `src.benchmark.m2_sync` copies the state to Drive in an order that is safe to interrupt (shards first, journal last) and restores it on a fresh runtime. The notebook `arxiv_nhom1_m2_parse_benchmark.ipynb` ties it together.
+- The five runs were crawled by revision `ad03e0a`, which drops every `.bbl`: about one version in ten has no reference list. The group accepts this as a limitation and says so in the Book.

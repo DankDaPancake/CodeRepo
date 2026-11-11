@@ -91,7 +91,13 @@ def eligible_papers(work_dir: Path) -> dict[str, dict]:
     }
 
 
-def draw(out_dir: Path, work_dir: Path, report: Path, n: int, seed: int, data_root: Path | None):
+def _root_of(data_root, folder: str) -> Path | str:
+    """The corpus root that holds ``folder`` (the group crawl is several runs)."""
+    roots = [data_root] if isinstance(data_root, str | Path) else list(data_root or [])
+    return next((Path(r) for r in roots if (Path(r) / folder).is_dir()), roots[0] if roots else ".")
+
+
+def draw(out_dir: Path, work_dir: Path, report: Path, n: int, seed: int, data_root=None):
     papers = eligible_papers(work_dir)
     chosen = random.Random(seed).sample(sorted(papers), min(n, len(papers)))
     report.mkdir(parents=True, exist_ok=True)
@@ -104,7 +110,11 @@ def draw(out_dir: Path, work_dir: Path, report: Path, n: int, seed: int, data_ro
         parsed = [v for v in rec["versions"] if v["status"] == "parsed"]
         lines = [f"# {arxiv_id}", ""]
         for v in rec["versions"]:
-            where = f"{data_root}/{rec['folder']}/v{v['version']}/{v['root']}" if v["root"] else "-"
+            where = (
+                f"{_root_of(data_root, rec['folder'])}/{rec['folder']}/v{v['version']}/{v['root']}"
+                if v["root"]
+                else "-"
+            )
             lines += [f"## v{v['version']}: {v['status']}  root: `{where}`", ""]
             if v["status"] == "parsed":
                 lines += ["```text", *render_tree(elements, hierarchy, v["version"]), "```", ""]
@@ -168,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("draw", help="pick papers and write the reading material")
     d.add_argument("--out-dir", type=Path, required=True, help="M2 output (shard-*/)")
     d.add_argument("--work-dir", type=Path, required=True, help="M2 work dir (shards.jsonl)")
-    d.add_argument("--data-root", type=Path, default=Path("data/corpus"))
+    d.add_argument(
+        "--data-root", type=Path, action="append", help="corpus folder; repeat for several runs"
+    )
     d.add_argument("--report", type=Path, default=Path("audit"))
     d.add_argument("-n", type=int, default=30)
     d.add_argument("--seed", type=int, default=2026)
@@ -178,7 +190,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "draw":
-        sheet = draw(args.out_dir, args.work_dir, args.report, args.n, args.seed, args.data_root)
+        sheet = draw(
+            args.out_dir,
+            args.work_dir,
+            args.report,
+            args.n,
+            args.seed,
+            args.data_root or [Path("data/corpus")],
+        )
         print(f"{len(sheet)} papers -> {args.report}/ (fill {args.report}/audit_sheet.csv)")
         return 0
     summary, wrong = score(args.sheet)

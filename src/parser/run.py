@@ -38,6 +38,13 @@ Outputs:
     <work-dir>/run_summary.json   counts and timings of the last run (runs.jsonl keeps all)
     <work-dir>/run.log, run.lock
 
+A distributed crawl (the group's five runs) is parsed as one corpus: repeat ``--data-root``
+(and ``--crawl-work-dir``, one per run). A paper found in two runs stops the run; with
+``--expect-assigned`` it also stops unless the papers are exactly the 20,000 assigned IDs
+(``<work-dir>/assigned_check.json`` lists what is missing). Exit codes: 0 done, 2 another run
+uses the work directory, 3 a stage is missing, 4 ``--verify-done`` found a changed paper, 5 the
+corpus is not the assigned IDs or a paper is in two runs, 130 interrupted.
+
 ``--workers N`` runs N processes over the papers (results are written in folder order by the
 parent, so shards do not depend on N). ``--paper-timeout`` (POSIX only) turns a paper that
 runs too long into an ``error`` instead of stalling the run.
@@ -385,10 +392,60 @@ def clean_orphans(out_dir: Path, committed: list[int]) -> list[str]:
 # --------------------------------------------------------------------------- corpus
 
 
-def list_papers(data_root: Path) -> list[Path]:
-    return sorted(
-        p for p in Path(data_root).iterdir() if p.is_dir() and (p / "metadata.json").is_file()
-    )
+class DuplicatePaperError(RuntimeError):
+    """The same paper is in two of the crawl runs given as ``--data-root``."""
+
+
+class IncompleteCorpusError(RuntimeError):
+    """``--expect-assigned``: the papers found are not exactly the assigned IDs."""
+
+
+def as_paths(value) -> list[Path]:
+    """One path or several (the runs of a distributed crawl) as a list."""
+    if value is None:
+        return []
+    return [Path(value)] if isinstance(value, str | Path) else [Path(v) for v in value]
+
+
+def list_papers(data_root) -> list[Path]:
+    """Paper folders of one crawl run, or of several runs (partitions of one corpus).
+
+    The result is sorted by folder name whatever the order of the roots, so that shards and
+    outputs do not depend on it. A paper found in two runs is an error: the partitions of the
+    group crawl are disjoint, and parsing one paper twice would hide a mistake.
+    """
+    found: dict[str, Path] = {}
+    for root in as_paths(data_root):
+        for p in root.iterdir():
+            if p.is_dir() and (p / "metadata.json").is_file():
+                if p.name in found:
+                    raise DuplicatePaperError(
+                        f"{p.name} is in both {found[p.name].parent} and {root}"
+                    )
+                found[p.name] = p
+    return [found[name] for name in sorted(found)]
+
+
+def assigned_folders() -> set[str]:
+    """Folder names of every assigned ID (the four ranges of ``config.RANGES``): 20,000."""
+    from src.utils.ids import iter_id_range
+
+    return {
+        to_folder_name(pid)
+        for first, last in config.RANGES.values()
+        for pid in iter_id_range(first, last, config.MONTH_END)
+    }
+
+
+def check_assigned(papers: list[Path]) -> dict:
+    """Papers found versus the assigned IDs: ``expected``, ``found``, ``missing``, ``extra``."""
+    expected, found = assigned_folders(), {p.name for p in papers}
+    return {
+        "expected": len(expected),
+        "found": len(found),
+        "missing": sorted(expected - found),
+        "extra": sorted(found - expected),
+    }
 
 
 def select_papers(
@@ -401,18 +458,17 @@ def select_papers(
     return papers[:limit] if limit is not None else papers
 
 
-def crawl_index(work_dir: Path | None) -> dict[str, dict[int, dict]]:
-    """arxiv_id -> {version: crawler record} from the crawler's ``versions.jsonl``."""
+def crawl_index(work_dir) -> dict[str, dict[int, dict]]:
+    """arxiv_id -> {version: crawler record} from the ``versions.jsonl`` of one or more runs."""
     index: dict[str, dict[int, dict]] = {}
-    if work_dir is None:
-        return index
     from src.run_pipeline import load_version_state
 
-    for (arxiv_id, version), rec in load_version_state(Path(work_dir) / "versions.jsonl").items():
-        index.setdefault(arxiv_id, {})[version] = {
-            "status": rec.get("status"),
-            "kind": rec.get("kind"),
-        }
+    for directory in as_paths(work_dir):
+        for (arxiv_id, version), rec in load_version_state(directory / "versions.jsonl").items():
+            index.setdefault(arxiv_id, {})[version] = {
+                "status": rec.get("status"),
+                "kind": rec.get("kind"),
+            }
     return index
 
 
@@ -498,7 +554,7 @@ def export_csv(work_dir: Path, papers: dict[str, dict]) -> None:
 
 
 def run(
-    data_root: Path,
+    data_root,
     out_dir: Path,
     work_dir: Path,
     *,
@@ -511,14 +567,16 @@ def run(
     shard_rows: int = 200_000,
     retry_errors: bool = False,
     verify_done: bool = False,
-    crawl_work_dir: Path | None = None,
+    crawl_work_dir=None,
+    expect_assigned: bool = False,
     progress: bool = True,
 ) -> dict:
     """Parse the selected papers not committed yet; returns the summary (also written)."""
     options = options or Options()
     if problems := check_stages(options):
         raise StageError("; ".join(problems))
-    data_root, out_dir, work_dir = Path(data_root), Path(out_dir), Path(work_dir)
+    roots = as_paths(data_root)
+    out_dir, work_dir = Path(out_dir), Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     lock = WorkDirLock(work_dir)
     lock.acquire()  # raises WorkDirLockedError: two runs must not share a journal
@@ -528,12 +586,25 @@ def run(
     done, committed = journal.load()
     this_run: list[PaperOutcome] = []
     written = Counter()
+    assigned: dict | None = None
     try:
         if not options.scan:
             out_dir.mkdir(parents=True, exist_ok=True)
             if removed := clean_orphans(out_dir, committed):
                 log.warning("removed unfinished output of an earlier run: %s", removed)
-        selected = select_papers(list_papers(data_root), ids, offset, limit)
+        every_paper = list_papers(roots)
+        if expect_assigned:
+            assigned = check_assigned(every_paper)
+            (work_dir / "assigned_check.json").write_text(
+                json.dumps(assigned, indent=2) + "\n", encoding="utf-8"
+            )
+            if assigned["missing"] or assigned["extra"]:
+                raise IncompleteCorpusError(
+                    f"{assigned['found']} papers found for {assigned['expected']} assigned IDs: "
+                    f"{len(assigned['missing'])} missing (first {assigned['missing'][:5]}), "
+                    f"{len(assigned['extra'])} not assigned (first {assigned['extra'][:5]})"
+                )
+        selected = select_papers(every_paper, ids, offset, limit)
         if verify_done:
             changed = [
                 p.name
@@ -614,6 +685,9 @@ def run(
             workers,
             options,
         )
+        summary["data_roots"] = [str(r) for r in roots]
+        if assigned is not None:
+            summary["assigned_check"] = {k: assigned[k] for k in ("expected", "found")}
         (work_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         with open(work_dir / "runs.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps(summary) + "\n")
@@ -653,10 +727,25 @@ def _summary(started_at, wall_s, interrupted, outcomes, done, written, workers, 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--data-root", type=Path, default=Path(config.DEFAULT_DATA_ROOT))
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        action="append",
+        help="corpus folder; repeat it for the runs of a distributed crawl (they are merged)",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("data/m2"))
     parser.add_argument("--work-dir", type=Path, default=Path("work/m2"))
-    parser.add_argument("--crawl-work-dir", type=Path, help="crawler work/ with versions.jsonl")
+    parser.add_argument(
+        "--crawl-work-dir",
+        type=Path,
+        action="append",
+        help="crawler work/ with versions.jsonl (repeat it, one per --data-root)",
+    )
+    parser.add_argument(
+        "--expect-assigned",
+        action="store_true",
+        help="stop unless the papers found are exactly the 20,000 assigned IDs",
+    )
     parser.add_argument("--ids", help="comma-separated arXiv IDs, or @file with one per line")
     parser.add_argument("--offset", type=int, default=0, help="skip the first N papers")
     parser.add_argument("--limit", type=int, help="parse at most N papers")
@@ -695,6 +784,7 @@ def _read_ids(value: str | None) -> list[str] | None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.data_root = args.data_root or [Path(config.DEFAULT_DATA_ROOT)]
     stages = dict(STAGES)
     for item in args.stage:
         name, _, spec = item.partition("=")
@@ -723,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
             retry_errors=args.retry_errors,
             verify_done=args.verify_done,
             crawl_work_dir=args.crawl_work_dir,
+            expect_assigned=args.expect_assigned,
             progress=not args.no_progress,
         )
     except StageError as exc:
@@ -737,6 +828,9 @@ def main(argv: list[str] | None = None) -> int:
     except ChangedCorpusError as exc:
         print(f"stopped: {exc}", file=sys.stderr)
         return 4
+    except (IncompleteCorpusError, DuplicatePaperError) as exc:
+        print(f"not started: {exc}", file=sys.stderr)
+        return 5
     except KeyboardInterrupt:
         print("interrupted: run the same command to resume", file=sys.stderr)
         return 130
