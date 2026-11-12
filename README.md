@@ -7,7 +7,7 @@
 - **Book (Moodle submission link):** <https://hcmus-arxiv-nhom1.github.io/arxiv-book/>
 - **Code repository:** <https://github.com/hcmus-arxiv-nhom1/CodeRepo>
 - **Statement:** <https://hcmus-cs-ta.github.io/lab-book/intro-ds/statement/>
-- Data contract: [`docs/data_contract.md`](docs/data_contract.md) · Specs: [`specs/`](specs/)
+- Data contract: [`docs/data_contract.md`](docs/data_contract.md) · Specs: [`docs/specs/`](docs/specs/)
 
 ## Environment
 
@@ -104,7 +104,7 @@ python -m src.run_pipeline --ids 2606.30762,2607.00001
 - `--month-end YYMM=N`: last sequence number of a month the range crosses. June 2026 was confirmed with the API as `2606.32040` (stored in `config.MONTH_END`).
 - `--keep-ext .tex,.bib,.bbl`: change the kept extensions (default `.tex,.bib`, as required by M1).
 - `--snapshot <file>`: optional Kaggle snapshot-first discovery, with API enrichment for historical versions.
-- `--adaptive-pacing`: after an HTTP 429 slow the arXiv pace by 1.5x (cap 10 s) and win it back after 20 successes; never below 3 s. Off by default, see [spec 0004](specs/0004-throttle-resilience.md).
+- `--adaptive-pacing`: after an HTTP 429 slow the arXiv pace by 1.5x (cap 10 s) and win it back after 20 successes; never below 3 s. Off by default, see [spec 0004](docs/specs/0004-throttle-resilience.md).
 - `--no-references`: skip Semantic Scholar; `--refresh-metadata`: run discovery again for IDs that already have `metadata.json`.
 
 ### How the crawler calls arXiv
@@ -171,7 +171,7 @@ In code: `gather(version_dir)` returns the root file and the `.tex` files reacha
 
 ## Parser (M2): running the whole corpus
 
-One command parses every paper and every version, in shards, and can be stopped and started again (spec [0005](specs/0005-m2-runner.md)):
+One command parses every paper and every version, in shards, and can be stopped and started again (spec [0005](docs/specs/0005-m2-runner.md)):
 
 ```bash
 # 20 papers first, to check the stages and measure the time per paper

@@ -1,5 +1,5 @@
 # Drafted with the help of an AI assistant (Claude, Anthropic), cited per the course rules.
-"""Reference metadata from Semantic Scholar (M1), see specs/0001-references.md.
+"""Reference metadata from Semantic Scholar (M1), see docs/specs/0001-references.md.
 
 Owner: Đăng (Member 4). Drafted by Thiên on 27/10/2026 to unblock the official crawl.
 

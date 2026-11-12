@@ -1,0 +1,7 @@
+A Colab failure to read `SHIFT.json` during cleanup could replace the chunk's original exception and skip measurement finalization/evidence export. Drive telemetry errors could similarly prevent local recovery.
+
+Preserve the original exception, record cleanup failures separately, and attempt each local recovery step independently. Finalize buffered telemetry into local work even when Drive publication fails, leaving incomplete measurements explicitly flagged. Stop after bounded marker-read retries without recreating or taking ownership of a missing marker; validate the shift before final remote checkpoint publication. Capture child stdout/stderr in profile `console.log`. If normal statistics export fails, create a raw local `rescue_results.zip`; the notebook download cell can use this fallback.
+
+Validation: 244 offline tests pass, Ruff check/format pass. Regression tests first reproduced exception masking, lost local measurement finalization, transient marker disappearance and failed statistics export. No live Colab/Drive reproduction or crawl optimization claimed. The user's25-minute/0-complete result still needs runtime logs; this PR fixes confirmed recovery/diagnostic defects rather than claiming a speedup.
+
+Do not reset a failed runtime until its local evidence/corpus has been downloaded. A local rescue is not a verified Drive checkpoint. Existing run revision checks remain unchanged.

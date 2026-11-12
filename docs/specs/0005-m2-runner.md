@@ -6,7 +6,7 @@
 
 ## Context
 
-The M2 action plan (01/11) gives Thiên the shared runner ("one command for the whole corpus: versions without TeX recorded as empty, stop and resume"), `\bibitem` → BibTeX and the error hunt in `gather`. The runner is the glue of everybody's stages, so it fixes their call signatures here, in one place, for Gate 1 ("stable interfaces"). It does **not** change the three output tables (`elements`, `hierarchy`, `bibtex`) of the M2 schema: it only adds files under `work/`, which [`docs/data_contract.md`](../docs/data_contract.md) §1 lists.
+The M2 action plan (01/11) gives Thiên the shared runner ("one command for the whole corpus: versions without TeX recorded as empty, stop and resume"), `\bibitem` → BibTeX and the error hunt in `gather`. The runner is the glue of everybody's stages, so it fixes their call signatures here, in one place, for Gate 1 ("stable interfaces"). It does **not** change the three output tables (`elements`, `hierarchy`, `bibtex`) of the M2 schema: it only adds files under `work/`, which [`docs/data_contract.md`](../data_contract.md) §1 lists.
 
 ## Stage interfaces
 

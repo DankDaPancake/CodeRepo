@@ -11,6 +11,6 @@ Stages, in the order the runner calls them for each version of each paper:
 - ``writer``: the rows of a shard -> three Parquet files
 
 ``run`` is the runner (one command for the whole corpus, resumable, ``--workers``); the types
-shared by the stages are in ``model`` and the interfaces in ``specs/0005-m2-runner.md``.
+shared by the stages are in ``model`` and the interfaces in ``docs/specs/0005-m2-runner.md``.
 ``sample_set`` builds a development sample of the crawled corpus.
 """

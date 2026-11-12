@@ -1,0 +1,5 @@
+Align M1 reporting with the new full-session measurement contract: distinguish session wall/RSS/disk from chunk diagnostics, document durable telemetry and interrupted-tail lower bounds, and define per-paper attempt latency separately from source work and amortized throughput.
+
+Fix discovery-failure success counting (`0 == 0`), report papers with TeX separately, display byte units and reference-metadata completeness when available, and plot each session separately. Retain explicit placeholder/final-run warnings. Regenerate the nonexecuting Colab notebook mirror from CodeRepo `8b9249ee09e323b1b168f4e045497df412893425`, which pins implementation `8310f7e`.
+
+Validation: mirror provenance and code-cell digest checks pass; mirror regression test passes; `jupyter-book build --html --execute` succeeds (analysis notebooks executed; subsequent builds reuse valid execution cache). The operational crawler notebook stays skipped. No final dataset measurements or live Colab/Drive smoke claimed. Merge alongside the CodeRepo measurement PR so notebook links resolve consistently.

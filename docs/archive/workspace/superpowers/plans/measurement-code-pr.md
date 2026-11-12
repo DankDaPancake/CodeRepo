@@ -1,0 +1,9 @@
+The chunk-only benchmark omitted orchestration/restore/sync resource usage, lacked per-paper lifecycle evidence, and double-counted limiter waits in download diagnostics. Add a separate full-session measurement scope before changing crawl performance.
+
+Record runner/notebook baseline plus descendant RSS, local data/work/staging disk, exact completed-session wall and per-paper attempt latency through required source/reference readiness. Publish checksummed telemetry independently of corpus checkpoints. Missing/corrupt segments and runtime-loss tails remain incomplete evidence; no exact time is invented. Keep legacy chunk metrics separately, and export rubric-aligned corpus/reference summaries.
+
+Fix discovery failure timing, rejected-identity finalization, and cached-module revision mismatches. The Colab entrypoint requires a fresh kernel and new run ID, pins implementation `8310f7eb6d244dae5ad244e4d4632604b57efb36`, and displays measurements/audits. Crawl request pacing, retry budgets, chunk size and extraction behavior are unchanged. Existing smoke-200 evidence is untouched.
+
+Validation: 239 offline tests pass, including real child-process RSS, interrupted telemetry restore, corrupt/missing segments, discovery interruption, wrong-revision refusal and kernel guard; Ruff check/format pass. Independent review findings were reproduced and fixed with regressions. Live Colab/Drive smoke is pending: run a fresh 200-ID sample and separate interruption/resume smoke before full benchmark or optimization. Measurement overhead is included; no speedup claimed.
+
+Measurement boundaries and remaining sampled-peak/lost-tail limits are in `docs/measurements.md`. The corresponding Book PR updates methodology and the pinned notebook mirror; final CSVs remain placeholders until a full 20,000-ID benchmark.
