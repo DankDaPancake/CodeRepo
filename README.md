@@ -41,7 +41,7 @@ Never commit secrets. On Colab use **Secrets** (key icon); locally use environme
 
 ## Running on Google Colab (CPU-only)
 
-Open the [group crawl and benchmark notebook](src/notebooks/arxiv_nhom1_crawl_benchmark.ipynb) and select a CPU runtime. The final benchmark must cover all four assigned ranges (20,000 IDs) and their discovered versions; samples are not final results.
+The [crawl and benchmark attempt](src/artifacts/attempts/arxiv_nhom1_crawl_benchmark.ipynb) is retained as an artifact. The five-run workflow uses the [only-v1](src/notebooks/arxiv_nhom1_only_v1_benchmark.ipynb) and [multi-version](src/notebooks/arxiv_nhom1_multi_version_benchmark.ipynb) notebooks; the final benchmark covers all four assigned ranges (20,000 IDs) and their discovered versions. The historical attempt is described below for reference.
 
 1. Upload the prepared `arxiv-assigned-20000.jsonl` to `MyDrive/arxiv-inputs/`, or edit `SNAPSHOT_DRIVE_PATH`. Both backends copy this verified input to local Colab disk.
 2. Set `USE_HUGGINGFACE=True` for the private HF Dataset and enable its writable `HF_TOKEN` Colab Secret, or set it to `False` for Drive output. For Drive create the intended team folder, initialize its `TEAM.json` once using `INITIALIZE_TEAM_FOLDER=True`, and set it false afterwards. `S2_API_KEY` and `ARXIV_CONTACT_EMAIL` are optional Colab Secrets.

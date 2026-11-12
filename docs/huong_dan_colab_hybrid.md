@@ -1,6 +1,8 @@
-# Hướng dẫn chạy crawler hybrid S3 + arXiv trên Colab
+# Hướng dẫn lịch sử: thử crawler hybrid S3 + arXiv trên Colab
 
-Notebook: [`src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Mở [notebook trên main bằng Colab](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/main/src/notebooks/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Notebook pin `CODE_REF` theo revision triển khai: không đổi revision khi resume.
+Notebook được lưu dưới dạng artifact của lần thử; hướng dẫn dưới đây được giữ để tham khảo.
+
+Notebook: [`src/artifacts/attempts/arxiv_nhom1_s3_arxiv_benchmark.ipynb`](../src/artifacts/attempts/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Mở [notebook trên main bằng Colab](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/main/src/artifacts/attempts/arxiv_nhom1_s3_arxiv_benchmark.ipynb). Notebook pin `CODE_REF` theo revision triển khai: không đổi revision khi resume.
 
 ## 1. Chuẩn bị
 

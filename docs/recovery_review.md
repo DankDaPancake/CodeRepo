@@ -10,7 +10,7 @@ Upload ZIP lên `MyDrive/recovery-colab-kit/`; mở các notebook trong `src/not
 
 # Kiểm chứng S3 v1 và retry unavailable
 
-Notebook `src/notebooks/arxiv_nhom1_recovery_metadata.ipynb` đã ngừng sử dụng: nhóm chấp nhận không kiểm chứng lại metadata S3 v1. Các cell bị chặn để tránh chạy nhầm; giả định version từ timestamp vẫn chưa được xác minh. Dùng `arxiv_nhom1_recovery_retry.ipynb` cho unavailable, với năm JOURNALS và OUTPUT riêng. Mặc định RUN_NETWORK=False. Không chạy nhiều runtime cùng ghi một output.
+Notebook `src/artifacts/attempts/arxiv_nhom1_recovery_metadata.ipynb` đã ngừng sử dụng: nhóm chấp nhận không kiểm chứng lại metadata S3 v1. Các cell bị chặn để tránh chạy nhầm; giả định version từ timestamp vẫn chưa được xác minh. Dùng `arxiv_nhom1_recovery_retry.ipynb` cho unavailable, với năm JOURNALS và OUTPUT riêng. Mặc định RUN_NETWORK=False. Không chạy nhiều runtime cùng ghi một output.
 
 Kết quả kiểm chứng metadata cũ, nếu có, chỉ là bằng chứng lịch sử: `compatible` chỉ nói chronology phù hợp, không chứng minh nội dung S3 là v1. Không gán múi giờ phỏng đoán cho evidence.
 

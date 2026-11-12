@@ -3,7 +3,9 @@ from pathlib import Path
 
 
 def read(name):
-    return json.loads((Path(__file__).parents[1] / "notebooks" / name).read_text(encoding="utf-8"))
+    root = Path(__file__).parents[1]
+    folder = "artifacts/attempts" if name in {"arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"} else "notebooks"
+    return json.loads((root / folder / name).read_text(encoding="utf-8"))
 
 
 def test_original_is_arxiv_only_and_has_no_s3_preparation():

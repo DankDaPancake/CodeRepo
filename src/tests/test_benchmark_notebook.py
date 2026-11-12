@@ -8,6 +8,13 @@ from types import SimpleNamespace
 import pytest
 
 
+def notebook_path(name):
+    root = Path(__file__).parents[1]
+    if name in {"arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"}:
+        return root / "artifacts" / "attempts" / name
+    return root / "notebooks" / name
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -18,7 +25,7 @@ import pytest
     ],
 )
 def test_directory_and_run_configuration_are_separate_and_executable(name):
-    path = Path(__file__).parents[1] / "notebooks" / name
+    path = notebook_path(name)
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     directories = next(c for c in cells if c.get("id") == "directory-config")
     run = next(c for c in cells if c.get("id") == "f94c4b6e")
@@ -39,7 +46,7 @@ def test_directory_and_run_configuration_are_separate_and_executable(name):
 )
 def test_checkout_adds_repo_to_python_path(name):
     cells = json.loads(
-        (Path(__file__).parents[1] / "notebooks" / name).read_text(encoding="utf-8")
+        (notebook_path(name)).read_text(encoding="utf-8")
     )["cells"]
     source = "".join(next(c for c in cells if c.get("id") == "checkout-revision")["source"])
     assert "sys.path.insert(0, str(repo_dir))" in source
@@ -47,7 +54,7 @@ def test_checkout_adds_repo_to_python_path(name):
 
 def test_single_notebook_has_safe_smoke_defaults_and_no_outputs():
     folder = Path(__file__).parents[1] / "notebooks"
-    path = folder / "arxiv_nhom1_crawl_benchmark.ipynb"
+    path = notebook_path("arxiv_nhom1_crawl_benchmark.ipynb")
     notebook = json.loads(path.read_text(encoding="utf-8"))
     assert not (folder / "colab_crawl.ipynb").exists()
     assert not (folder / "colab_benchmark.ipynb").exists()
@@ -67,7 +74,7 @@ def test_single_notebook_has_safe_smoke_defaults_and_no_outputs():
 
 
 def test_notebook_refuses_cached_pipeline_modules_before_setup():
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
+    path = notebook_path("arxiv_nhom1_crawl_benchmark.ipynb")
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     guards = [(i, c) for i, c in enumerate(cells) if c.get("id") == "fresh-kernel-guard"]
     assert len(guards) == 1
@@ -85,7 +92,7 @@ def test_notebook_refuses_cached_pipeline_modules_before_setup():
 
 
 def test_notebook_defaults_to_drive_smoke_without_embedded_token():
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
+    path = notebook_path("arxiv_nhom1_crawl_benchmark.ipynb")
     nb = json.loads(path.read_text(encoding="utf-8"))
     config = next(c for c in nb["cells"] if "MODE = " in "".join(c["source"]))
     values = {}
@@ -103,7 +110,7 @@ def test_snapshot_cell_verifies_drive_input_before_storage(tmp_path, monkeypatch
     import shutil
     import sys
 
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
+    path = notebook_path("arxiv_nhom1_crawl_benchmark.ipynb")
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     index, cell = next((i, c) for i, c in enumerate(cells) if c.get("id") == "download-snapshot")
     storage = next(i for i, c in enumerate(cells) if c.get("id") == "authorize-storage")
@@ -147,7 +154,7 @@ def test_snapshot_cell_verifies_drive_input_before_storage(tmp_path, monkeypatch
 def test_drive_authorization_mounts_drive(tmp_path, monkeypatch):
     import sys
 
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
+    path = notebook_path("arxiv_nhom1_crawl_benchmark.ipynb")
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     cell = next(c for c in cells if c.get("id") == "authorize-storage")
 
@@ -167,7 +174,7 @@ def test_drive_authorization_mounts_drive(tmp_path, monkeypatch):
 
 
 def test_notebook_is_drive_only():
-    path = Path(__file__).parents[1] / "notebooks/arxiv_nhom1_crawl_benchmark.ipynb"
+    path = notebook_path("arxiv_nhom1_crawl_benchmark.ipynb")
     cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
     source = "\n".join("".join(c["source"]) for c in cells)
     assert "RUN_CRAWL = False" in source
