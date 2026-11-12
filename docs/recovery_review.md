@@ -23,10 +23,11 @@ Chỉ dùng một tập nhỏ kết quả đã được nhóm xem xét. Chuẩn 
 ```python
 from pathlib import Path
 from src.benchmark.recovery_review import measure_integration
+
 report = measure_integration(
-    Path('/content/drive/MyDrive/original-run'),
-    Path('/content/drive/MyDrive/recovery-staging'),
-    Path('/content/drive/MyDrive/integration-experiment-new'),
+    Path("/content/drive/MyDrive/original-run"),
+    Path("/content/drive/MyDrive/recovery-staging"),
+    Path("/content/drive/MyDrive/integration-experiment-new"),
 )
 print(report)
 ```

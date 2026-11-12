@@ -39,8 +39,8 @@ Mỗi run ghi mode, cấu hình chính xác, snapshot SHA-256 và mốc chốt v
 Notebook dự kiến cho phép chọn:
 
 ```python
-SOURCE_MODE = "arxiv"      # "arxiv", "arxiv_s3", hoặc "s3"
-MODE = "sample"            # phạm vi benchmark; tách khỏi nguồn
+SOURCE_MODE = "arxiv"  # "arxiv", "arxiv_s3", hoặc "s3"
+MODE = "sample"  # phạm vi benchmark; tách khỏi nguồn
 ```
 
 Chỉ yêu cầu AWS credentials với hai chế độ có S3, thông qua Colab Secrets, và không ghi secret vào manifest/log. `arxiv` không đọc AWS secret. Các mode có S3 phải hiển thị ước tính dung lượng/chi phí trước bước tải và cần thử với tài khoản được cấp quyền; ước tính và AWS budget alert không phải giới hạn chi phí tức thời.

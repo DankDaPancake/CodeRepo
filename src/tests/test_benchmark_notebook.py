@@ -45,9 +45,7 @@ def test_directory_and_run_configuration_are_separate_and_executable(name):
     "name", ["arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"]
 )
 def test_checkout_adds_repo_to_python_path(name):
-    cells = json.loads(
-        (notebook_path(name)).read_text(encoding="utf-8")
-    )["cells"]
+    cells = json.loads((notebook_path(name)).read_text(encoding="utf-8"))["cells"]
     source = "".join(next(c for c in cells if c.get("id") == "checkout-revision")["source"])
     assert "sys.path.insert(0, str(repo_dir))" in source
 

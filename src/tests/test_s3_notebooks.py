@@ -4,7 +4,11 @@ from pathlib import Path
 
 def read(name):
     root = Path(__file__).parents[1]
-    folder = "artifacts/attempts" if name in {"arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"} else "notebooks"
+    folder = (
+        "artifacts/attempts"
+        if name in {"arxiv_nhom1_crawl_benchmark.ipynb", "arxiv_nhom1_s3_arxiv_benchmark.ipynb"}
+        else "notebooks"
+    )
     return json.loads((root / folder / name).read_text(encoding="utf-8"))
 
 

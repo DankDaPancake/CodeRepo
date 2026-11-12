@@ -205,16 +205,16 @@ folder.mkdir(parents=True, exist_ok=False)
 saved = folder / source.name
 shutil.copyfile(source, saved)
 
+
 def sha256(path):
     with path.open("rb") as f:
         return hashlib.file_digest(f, "sha256").hexdigest()
 
+
 digest = sha256(source)
 if sha256(saved) != digest:
     raise IOError("Bản ZIP trên Drive không khớp bản local")
-(folder / "SHA256SUMS.txt").write_text(
-    f"{digest}  {saved.name}\n", encoding="utf-8"
-)
+(folder / "SHA256SUMS.txt").write_text(f"{digest}  {saved.name}\n", encoding="utf-8")
 print("Đã lưu và kiểm tra:", saved)
 ```
 
