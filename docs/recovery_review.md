@@ -3,16 +3,16 @@
 Tạo runtime từ checkout chứa mã recovery và năm journal:
 
 ```bash
-python -m src.benchmark.package_recovery --evidence ../final_evidence --output ../recovery-colab-kit/recovery-runtime.zip
+python -m src.benchmark.package_recovery --evidence ../final_evidence --output src/artifacts/recovery-colab-kit/recovery-runtime.zip
 ```
 
-Upload ZIP lên `MyDrive/recovery-colab-kit/`; mở các notebook trong `src/notebooks/` bằng Colab. Chạy cell từ đầu, kiểm tra preflight rồi đổi RUN_NETWORK thành True. Kết quả nằm trong `MyDrive/recovery-colab-kit/results/`. Chạy hai notebook tuần tự; không dùng đồng thời hai runtime cho cùng output. Khi arXiv chặn, retry ghi `inconclusive` rồi dừng; đợi hết thời gian chặn trước khi resume.
+Upload ZIP lên `MyDrive/recovery-colab-kit/`; mở các notebook trong `src/notebooks/` bằng Colab. Chạy cell từ đầu, kiểm tra preflight rồi đổi RUN_NETWORK thành True. Kết quả nằm trong `MyDrive/recovery-colab-kit/results/`. Chỉ chạy notebook retry; không dùng đồng thời hai runtime cho cùng output. Khi arXiv chặn, retry ghi `inconclusive` rồi dừng; đợi hết thời gian chặn trước khi resume.
 
 # Kiểm chứng S3 v1 và retry unavailable
 
-Mở `src/notebooks/arxiv_nhom1_recovery_metadata.ipynb` hoặc `arxiv_nhom1_recovery_retry.ipynb` trong Colab. Cấu hình REPO, đủ năm JOURNALS và OUTPUT riêng. Mặc định RUN_NETWORK=False. Không chạy nhiều runtime cùng ghi một output.
+Notebook `src/artifacts/attempts/arxiv_nhom1_recovery_metadata.ipynb` đã ngừng sử dụng: nhóm chấp nhận không kiểm chứng lại metadata S3 v1. Các cell bị chặn để tránh chạy nhầm; giả định version từ timestamp vẫn chưa được xác minh. Dùng `arxiv_nhom1_recovery_retry.ipynb` cho unavailable, với năm JOURNALS và OUTPUT riêng. Mặc định RUN_NETWORK=False. Không chạy nhiều runtime cùng ghi một output.
 
-Discovery dùng API/OAI trực tiếp, refresh=True và không truyền snapshot. `compatible` chỉ nói chronology phù hợp; timestamp thiếu múi giờ hoặc lỗi discovery là `inconclusive`. Không gán múi giờ phỏng đoán cho evidence.
+Kết quả kiểm chứng metadata cũ, nếu có, chỉ là bằng chứng lịch sử: `compatible` chỉ nói chronology phù hợp, không chứng minh nội dung S3 là v1. Không gán múi giờ phỏng đoán cho evidence.
 
 Retry giữ đúng cặp ID/version cùng danh sách original_runs. HTTP 404/410 theo downloader thành unavailable; lỗi mạng thành inconclusive; archive hỏng sau các lần tải thành corrupt. Journal append + fsync, manifest kiểm tra hash đầu vào, hash từng file dùng cho resume. Nếu mất điện làm hỏng dòng cuối, dừng để kiểm tra thay vì âm thầm bỏ record.
 
@@ -23,10 +23,11 @@ Chỉ dùng một tập nhỏ kết quả đã được nhóm xem xét. Chuẩn 
 ```python
 from pathlib import Path
 from src.benchmark.recovery_review import measure_integration
+
 report = measure_integration(
-    Path('/content/drive/MyDrive/original-run'),
-    Path('/content/drive/MyDrive/recovery-staging'),
-    Path('/content/drive/MyDrive/integration-experiment-new'),
+    Path("/content/drive/MyDrive/original-run"),
+    Path("/content/drive/MyDrive/recovery-staging"),
+    Path("/content/drive/MyDrive/integration-experiment-new"),
 )
 print(report)
 ```

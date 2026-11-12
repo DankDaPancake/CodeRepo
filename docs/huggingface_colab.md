@@ -1,6 +1,8 @@
-# Hugging Face Colab smoke and handoff
+# Historical Hugging Face Colab smoke and handoff
 
-Open `src/notebooks/arxiv_nhom1_crawl_benchmark.ipynb` from the published
+This notebook is retained as an attempt; the instructions below describe that historical run.
+
+Open `src/artifacts/attempts/arxiv_nhom1_crawl_benchmark.ipynb` from the published
 `feat/huggingface-storage` branch. Use a fresh CPU runtime. This notebook defaults to
 100 Dang IDs, not the 20,000-ID final benchmark.
 
