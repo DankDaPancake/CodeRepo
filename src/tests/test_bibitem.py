@@ -464,3 +464,66 @@ def test_a_bbl_is_ignored_when_the_tex_has_its_own_bibitems(tmp_path):
     (tmp_path / "main.bbl").write_text(r"\bibitem{other} X. Y. Other. 1999.", encoding="utf-8")
     refs = extract_references(TexVersion(tmp_path), gather(tmp_path).files)
     assert [e.citation_key for e in refs.entries] == ["k"] and refs.bbl_files == []
+
+
+def test_external_bbl_is_used_when_tex_has_no_references(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}Text.\end{document}", encoding="utf8"
+    )
+    external = tmp_path / "external.bbl"
+    external.write_text(r"\bibitem{external} A. Author. A title. 2020.", encoding="utf8")
+    refs = extract_references(TexVersion(corpus), gather(corpus).files, external_bbl=[external])
+    assert [entry.citation_key for entry in refs.entries] == ["external"]
+    assert not (corpus / "external.bbl").exists()
+
+
+def test_external_bbl_does_not_override_tex_bibitems(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}\bibitem{inside} "
+        r"A. Author. Inside. 2001.\end{document}",
+        encoding="utf8",
+    )
+    external = tmp_path / "external.bbl"
+    external.write_text(r"\bibitem{outside} B. Author. Outside. 2020.", encoding="utf8")
+    refs = extract_references(TexVersion(corpus), gather(corpus).files, external_bbl=[external])
+    assert [entry.citation_key for entry in refs.entries] == ["inside"]
+    assert refs.bbl_files == []
+
+
+def test_local_and_external_bbl_conflict_is_reported(tmp_path):
+    import pytest
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "main.tex").write_text(r"\documentclass{article}\begin{document}Text.\end{document}")
+    (corpus / "local.bbl").write_text(r"\bibitem{local} Local.")
+    external = tmp_path / "external.bbl"
+    external.write_text(r"\bibitem{external} External.")
+    with pytest.raises(ValueError, match="Both local and external"):
+        extract_references(TexVersion(corpus), gather(corpus).files, external_bbl=[external])
+
+
+def test_external_bbl_changed_after_preflight_is_rejected(tmp_path):
+    import hashlib
+
+    import pytest
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "main.tex").write_text(r"\documentclass{article}\begin{document}Text.\end{document}")
+    external = tmp_path / "external.bbl"
+    content = b"\\bibitem{x} A. Author. Title. 2020."
+    external.write_bytes(content)
+    expected = hashlib.sha256(content).hexdigest()
+    external.write_bytes(b"X" * len(content))
+    with pytest.raises(ValueError, match="BBL integrity"):
+        extract_references(
+            TexVersion(corpus),
+            gather(corpus).files,
+            external_bbl=[external],
+            external_hashes={external: expected},
+        )
