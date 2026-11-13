@@ -322,3 +322,290 @@ def test_paper_timeout_turns_a_stuck_paper_into_an_error(tmp_path):
     assert summary["papers_failed_this_run"] == 1  # only the stuck paper; the run goes on
     papers = {r["arxiv_id"]: r for r in read_csv(tmp_path / "work-a" / "m2_papers.csv")}
     assert "timeout" in papers["2606.00001"]["error"] and papers["2606.00002"]["error"] == ""
+
+
+def test_runner_uses_bbl_for_matching_version_only(corpus, tmp_path):
+    bbl = tmp_path / "recovered.bbl"
+    bbl.write_text(r"\bibitem{recovered} A. Author. Title. 2020.", encoding="utf8")
+    options = Options(stages=FAKE.stages, bbl_index={("2606.00001", 1): [bbl]})
+    go(corpus, tmp_path, options=options)
+    rows = read_rows(tmp_path / "out-a", "bibtex")
+    assert {r["citation_key"] for r in rows} == {"recovered", "k1"}
+
+
+def test_cli_accepts_external_recovery_option():
+    from src.parser.run import build_parser
+
+    args = build_parser().parse_args(["--bbl-recovery-dir", "recovery"])
+    assert args.bbl_recovery_dir.name == "recovery"
+
+
+def test_cli_runs_with_verified_external_bbl(corpus, tmp_path):
+    import hashlib
+
+    recovery = tmp_path / "recovery"
+    file = recovery / "files/2606-00001/v1/main.bbl"
+    file.parent.mkdir(parents=True)
+    content = b"\\bibitem{outside} A. Author. Title. 2020."
+    file.write_bytes(content)
+    record = {
+        "arxiv_id": "2606.00001",
+        "version": 1,
+        "status": "recovered",
+        "files": [
+            {
+                "path": "files/2606-00001/v1/main.bbl",
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ],
+    }
+    (recovery / "versions.jsonl").write_text(json.dumps(record) + "\n", encoding="utf8")
+    result = main(
+        [
+            "--data-root",
+            str(corpus),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--scan",
+            "--no-progress",
+            "--bbl-recovery-dir",
+            str(recovery),
+        ]
+    )
+    assert result == 0
+    rows = read_csv(tmp_path / "work/m2_versions.csv")
+    assert (
+        next(r for r in rows if r["arxiv_id"] == "2606.00001" and r["version"] == "1")["n_bbl"]
+        == "1"
+    )
+
+
+def test_scan_refuses_to_resume_recovery_run_without_bbl_pointer(corpus, tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "bbl-input-identity.json").write_text('{"journal_sha256":"abc"}', encoding="utf8")
+    with pytest.raises(ValueError, match="BBL input"):
+        main(["--data-root", str(corpus), "--work-dir", str(work), "--scan", "--no-progress"])
+
+
+def test_external_scan_detects_corpus_edit_on_resume(corpus, tmp_path):
+    import hashlib
+
+    recovery = tmp_path / "recovery"
+    file = recovery / "files/2606-00001/v1/main.bbl"
+    file.parent.mkdir(parents=True)
+    content = b"\\bibitem{outside} A. Author. Title. 2020."
+    file.write_bytes(content)
+    record = {
+        "arxiv_id": "2606.00001",
+        "version": 1,
+        "status": "recovered",
+        "files": [
+            {
+                "path": "files/2606-00001/v1/main.bbl",
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ],
+    }
+    (recovery / "versions.jsonl").write_text(json.dumps(record) + "\n", encoding="utf8")
+    args = [
+        "--data-root",
+        str(corpus),
+        "--out-dir",
+        str(tmp_path / "out"),
+        "--work-dir",
+        str(tmp_path / "work"),
+        "--scan",
+        "--no-progress",
+        "--bbl-recovery-dir",
+        str(recovery),
+    ]
+    assert main(args) == 0
+    tex = corpus / "2606-00001/v1/main.tex"
+    data = tex.read_bytes()
+    tex.write_bytes(data.replace(b"First", b"Other"))
+    with pytest.raises(ValueError, match="corpus input changed"):
+        main(args)
+
+
+def test_workers_receive_only_their_papers_external_bbl(corpus, tmp_path, monkeypatch):
+    import src.parser.run as runner
+
+    file = tmp_path / "external.bbl"
+    file.write_text(r"\bibitem{k} Author. Title. 2020.")
+    index = {("2606.00001", 1): [file], ("2606.00002", 2): [file]}
+    original = runner.process_paper
+    seen = []
+
+    def observe(path, options, crawl=None):
+        seen.append((path.name, set(options.bbl_index)))
+        return original(path, options, crawl)
+
+    monkeypatch.setattr(runner, "process_paper", observe)
+    go(corpus, tmp_path, options=Options(stages=FAKE.stages, bbl_index=index))
+    assert dict(seen)["2606-00001"] == {("2606.00001", 1)}
+    assert dict(seen)["2606-00002"] == {("2606.00002", 2)}
+    assert dict(seen)["2606-00003"] == set()
+
+
+def test_cli_parses_external_bbl_into_parquet(corpus, tmp_path):
+    import hashlib
+
+    import pyarrow.parquet as pq
+
+    recovery = tmp_path / "recovery"
+    file = recovery / "files/2606-00001/v1/main.bbl"
+    file.parent.mkdir(parents=True)
+    content = b"\\bibitem{outside} A. Author. Title. 2020."
+    file.write_bytes(content)
+    record = {
+        "arxiv_id": "2606.00001",
+        "version": 1,
+        "status": "recovered",
+        "files": [
+            {
+                "path": "files/2606-00001/v1/main.bbl",
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ],
+    }
+    (recovery / "versions.jsonl").write_text(json.dumps(record) + "\n", encoding="utf8")
+    result = main(
+        [
+            "--data-root",
+            str(corpus),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--no-progress",
+            "--bbl-recovery-dir",
+            str(recovery),
+        ]
+    )
+    assert result == 0
+    rows = pq.read_table(tmp_path / "out/shard-00000/bibtex.parquet").to_pylist()
+    assert any(row["citation_key"] == "outside" for row in rows)
+
+
+def test_external_input_rejects_mismatched_paper_metadata(corpus, tmp_path):
+    import hashlib
+
+    metadata = corpus / "2606-00002/metadata.json"
+    doc = json.loads(metadata.read_text(encoding="utf8"))
+    doc["arxiv_id"] = "2606.00001"
+    metadata.write_text(json.dumps(doc), encoding="utf8")
+    recovery = tmp_path / "recovery"
+    file = recovery / "files/2606-00001/v1/main.bbl"
+    file.parent.mkdir(parents=True)
+    content = b"example"
+    file.write_bytes(content)
+    record = {
+        "arxiv_id": "2606.00001",
+        "version": 1,
+        "status": "recovered",
+        "files": [
+            {
+                "path": "files/2606-00001/v1/main.bbl",
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ],
+    }
+    (recovery / "versions.jsonl").write_text(json.dumps(record) + "\n", encoding="utf8")
+    with pytest.raises(ValueError, match="metadata"):
+        main(
+            [
+                "--data-root",
+                str(corpus),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--scan",
+                "--no-progress",
+                "--bbl-recovery-dir",
+                str(recovery),
+            ]
+        )
+
+
+def test_external_run_cannot_resume_scan_as_full_parse(corpus, tmp_path):
+    import hashlib
+
+    recovery = tmp_path / "recovery"
+    file = recovery / "files/2606-00001/v1/main.bbl"
+    file.parent.mkdir(parents=True)
+    content = b"\\bibitem{outside} A. Author. Title. 2020."
+    file.write_bytes(content)
+    record = {
+        "arxiv_id": "2606.00001",
+        "version": 1,
+        "status": "recovered",
+        "files": [
+            {
+                "path": "files/2606-00001/v1/main.bbl",
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ],
+    }
+    (recovery / "versions.jsonl").write_text(json.dumps(record) + "\n", encoding="utf8")
+    args = [
+        "--data-root",
+        str(corpus),
+        "--out-dir",
+        str(tmp_path / "out"),
+        "--work-dir",
+        str(tmp_path / "work"),
+        "--no-progress",
+        "--bbl-recovery-dir",
+        str(recovery),
+    ]
+    assert main([*args, "--scan"]) == 0
+    with pytest.raises(ValueError, match="configuration changed"):
+        main(args)
+
+
+def test_parser_main_restores_root_logging_configuration(corpus, tmp_path):
+    import logging
+
+    root = logging.getLogger()
+    level, handlers = root.level, list(root.handlers)
+    assert (
+        main(
+            [
+                "--data-root",
+                str(corpus),
+                "--work-dir",
+                str(tmp_path / "work"),
+                "--scan",
+                "--no-progress",
+                "--limit",
+                "1",
+            ]
+        )
+        == 0
+    )
+    assert root.level == level
+    assert root.handlers == handlers
+
+
+def test_runner_stops_if_external_bbl_changes_after_preflight(corpus, tmp_path):
+    import hashlib
+
+    from src.parser.bibitem import BBLIntegrityError
+
+    file = tmp_path / "external.bbl"
+    original = b"\\bibitem{x} A. Author. Title. 2020."
+    file.write_bytes(original)
+    expected = hashlib.sha256(original).hexdigest()
+    file.write_bytes(b"X" * len(original))
+    options = Options(
+        stages=FAKE.stages, bbl_index={("2606.00001", 1): [file]}, bbl_hashes={file: expected}
+    )
+    with pytest.raises(BBLIntegrityError):
+        go(corpus, tmp_path, options=options)

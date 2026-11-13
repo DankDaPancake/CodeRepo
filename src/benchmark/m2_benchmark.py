@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -153,9 +154,11 @@ def write_report(
             "command": result["cmd"],
         }
     )
-    with open(report / SESSIONS, "w", encoding="utf-8", newline="\n") as fh:
+    session_temp = report / (SESSIONS + ".part")
+    with open(session_temp, "w", encoding="utf-8", newline="\n") as fh:
         for s in sessions:
             fh.write(json.dumps(s) + "\n")
+    os.replace(session_temp, report / SESSIONS)
 
     series = _read_csv(report / SERIES)
     series += [
@@ -167,10 +170,12 @@ def write_report(
         }
         for t, rss, disk in result["samples"]
     ]
-    with open(report / SERIES, "w", encoding="utf-8", newline="") as fh:
+    series_temp = report / (SERIES + ".part")
+    with open(series_temp, "w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=["session_id", "t_sec", "rss_total_mb", "disk_mb"])
         writer.writeheader()
         writer.writerows(series)
+    os.replace(series_temp, report / SERIES)
 
     inputs = sum(folder_size(r) for r in data_roots) / 1e6
     with open(report / SUMMARY, "w", encoding="utf-8", newline="") as fh:

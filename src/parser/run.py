@@ -69,7 +69,7 @@ from collections import Counter, deque
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -77,7 +77,7 @@ from tqdm import tqdm
 
 from src import config
 from src.crawler.worklock import WorkDirLock, WorkDirLockedError
-from src.parser.bibitem import extract_references
+from src.parser.bibitem import BBLIntegrityError, extract_references
 from src.parser.gather import TexVersion
 from src.parser.model import (
     EMPTY,
@@ -133,6 +133,8 @@ class Options:
     stages: dict[str, str] = field(default_factory=lambda: dict(STAGES))
     scan: bool = False  # gather + references only: no tree, no tables
     paper_timeout_s: float = 0.0  # 0 = none
+    bbl_index: dict[tuple[str, int], list[Path]] = field(default_factory=dict)
+    bbl_hashes: dict[Path, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -238,7 +240,12 @@ def _count_nodes(tree) -> int | None:
 
 
 def _parse_version(
-    vdir: Path, title: str | None, version: int, options: Options, crawl: dict | None
+    vdir: Path,
+    title: str | None,
+    version: int,
+    options: Options,
+    crawl: dict | None,
+    arxiv_id: str = "",
 ) -> tuple[dict, VersionParse | None]:
     """One version -> its journal record and what ``dedup`` gets (None for a missing folder)."""
     info = dict.fromkeys(VERSION_COLUMNS, None)
@@ -263,7 +270,12 @@ def _parse_version(
         if found.root is None:
             info.update(status=NO_ROOT, reason="no \\documentclass")
             return info, VersionParse(version, NO_ROOT)
-        refs = extract_references(tex, found.files)
+        refs = extract_references(
+            tex,
+            found.files,
+            external_bbl=options.bbl_index.get((arxiv_id, version)),
+            external_hashes=options.bbl_hashes or None,
+        )
         tree = _build_tree(options, _normalize(options, tex.expand(found.root)))
         info.update(
             status=PARSED,
@@ -277,6 +289,8 @@ def _parse_version(
             n_refs=len(refs.entries),
         )
         return info, VersionParse(version, PARSED, tree, refs.entries)
+    except BBLIntegrityError:
+        raise
     except Exception as exc:  # one bad version must not cost the paper or the run
         info.update(status=ERROR, reason=_short(exc))
         return info, VersionParse(version, ERROR)
@@ -307,12 +321,15 @@ def process_paper(
                     number,
                     options,
                     (crawl or {}).get(number),
+                    arxiv_id,
                 )
                 versions.append(info)
                 if parse is not None:
                     parses.append(parse)
             if parses:
                 rows = _dedup(options, arxiv_id, parses)
+    except BBLIntegrityError:
+        raise
     except (Exception, PaperTimeout) as exc:
         error, rows = _short(exc), empty_rows()
     return PaperOutcome(
@@ -483,20 +500,33 @@ def _outcomes(
     def crawl_of(path: Path) -> dict[int, dict] | None:
         return crawl.get(from_folder_name(path.name)) if _is_folder_name(path.name) else None
 
+    by_paper: dict[str, dict[tuple[str, int], list[Path]]] = {}
+    for key, files in options.bbl_index.items():
+        by_paper.setdefault(key[0], {})[key] = files
+
+    def options_of(path: Path) -> Options:
+        paper_index = by_paper.get(_id_of(path), {})
+        paper_files = {file for files in paper_index.values() for file in files}
+        return replace(
+            options,
+            bbl_index=paper_index,
+            bbl_hashes={p: options.bbl_hashes[p] for p in paper_files if p in options.bbl_hashes},
+        )
+
     if workers <= 1:
         for path in papers:
-            yield process_paper(path, options, crawl_of(path))
+            yield process_paper(path, options_of(path), crawl_of(path))
         return
     with ProcessPoolExecutor(max_workers=workers, max_tasks_per_child=RECYCLE_AFTER) as pool:
         remaining = iter(papers)
         window = deque(
-            pool.submit(process_paper, p, options, crawl_of(p))
+            pool.submit(process_paper, p, options_of(p), crawl_of(p))
             for p in itertools.islice(remaining, workers * 2)
         )
         while window:
             outcome = window.popleft().result()
             if (nxt := next(remaining, None)) is not None:
-                window.append(pool.submit(process_paper, nxt, options, crawl_of(nxt)))
+                window.append(pool.submit(process_paper, nxt, options_of(nxt), crawl_of(nxt)))
             yield outcome
 
 
@@ -733,6 +763,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="corpus folder; repeat it for the runs of a distributed crawl (they are merged)",
     )
+    parser.add_argument("--bbl-recovery-dir", type=Path, help="verified BBL recovery input")
     parser.add_argument("--out-dir", type=Path, default=Path("data/m2"))
     parser.add_argument("--work-dir", type=Path, default=Path("work/m2"))
     parser.add_argument(
@@ -791,13 +822,76 @@ def main(argv: list[str] | None = None) -> int:
         if name not in STAGES or ":" not in spec:
             raise SystemExit(f"--stage expects NAME=MODULE:FUNCTION with NAME in {sorted(STAGES)}")
         stages[name] = spec
-    options = Options(stages=stages, scan=args.scan, paper_timeout_s=args.paper_timeout)
+    bbl_index = {}
+    bbl_hashes = {}
+    if not args.bbl_recovery_dir and (args.work_dir / "bbl-input-identity.json").exists():
+        raise ValueError("BBL input is required to resume this run")
+    if args.bbl_recovery_dir:
+        from src.benchmark.m2_bbl_input import (
+            load_bbl_hashes,
+            validate_recovery_complete,
+            verify_run_identity,
+        )
+        from src.benchmark.m2_inputs import verify_corpus_identity, verify_run_config
+
+        if args.expect_assigned:
+            validate_recovery_complete(args.bbl_recovery_dir)
+        verify_run_config(
+            args.work_dir,
+            {
+                "stages": stages,
+                "scan": args.scan,
+                "workers": args.workers,
+                "shard_papers": args.shard_papers,
+                "shard_rows": args.shard_rows,
+                "paper_timeout": args.paper_timeout,
+            },
+        )
+        verify_corpus_identity(args.data_root, args.work_dir)
+        bbl_index = verify_run_identity(args.bbl_recovery_dir, args.work_dir)
+        bbl_hashes = load_bbl_hashes(args.bbl_recovery_dir, bbl_index)
+        identity = json.loads(
+            (args.work_dir / "bbl-input-identity.json").read_text(encoding="utf8")
+        )
+        journal_hash = hashlib.sha256(
+            (args.bbl_recovery_dir / "versions.jsonl").read_bytes()
+        ).hexdigest()
+        if journal_hash != identity["journal_sha256"]:
+            raise ValueError("BBL journal changed during preflight")
+        papers = {}
+        for paper in list_papers(as_paths(args.data_root)):
+            metadata = _read_metadata(paper)
+            arxiv_id = metadata.get("arxiv_id")
+            if not isinstance(arxiv_id, str) or to_folder_name(arxiv_id) != paper.name:
+                raise ValueError(f"Paper metadata does not match folder: {paper}")
+            if arxiv_id in papers:
+                raise ValueError(f"Duplicate paper metadata: {arxiv_id}")
+            papers[arxiv_id] = paper
+        for arxiv_id, version in bbl_index:
+            paper = papers.get(arxiv_id)
+            if (
+                paper is None
+                or not (paper / f"v{version}").is_dir()
+                or version > int(_read_metadata(paper).get("num_versions") or 0)
+            ):
+                raise ValueError(f"BBL input has no matching corpus version: {arxiv_id}v{version}")
+            if any((paper / f"v{version}").rglob("*.bbl")):
+                raise ValueError(f"Local BBL conflicts with external input: {arxiv_id}v{version}")
+    options = Options(
+        stages=stages,
+        scan=args.scan,
+        paper_timeout_s=args.paper_timeout,
+        bbl_index=bbl_index,
+        bbl_hashes=bbl_hashes,
+    )
 
     args.work_dir.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(args.work_dir / "run.log", encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger().addHandler(file_handler)
-    logging.getLogger().setLevel(logging.INFO)
+    root_logger = logging.getLogger()
+    previous_level = root_logger.level
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.INFO)
     try:
         summary = run(
             args.data_root,
@@ -834,6 +928,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("interrupted: run the same command to resume", file=sys.stderr)
         return 130
+    finally:
+        root_logger.removeHandler(file_handler)
+        file_handler.close()
+        root_logger.setLevel(previous_level)
     print(json.dumps(summary, indent=2))
     return 0
 

@@ -68,3 +68,10 @@ The group crawl is five partitions (`only-v1-all`, `multi-{dang,hieu,thien,tien}
 - `src.benchmark.m2_benchmark` adds the sessions of a resumed benchmark up (`m2_sessions.jsonl`, `session_id` in the time series) and reports `input_size` and `disk_max` (input plus the peak of output and work).
 - `src.benchmark.m2_sync` copies the state to Drive in an order that is safe to interrupt (shards first, journal last) and restores it on a fresh runtime. The notebook `arxiv_nhom1_m2_parse_benchmark.ipynb` ties it together.
 - The five runs were crawled by revision `ad03e0a`, which drops every `.bbl`: about one version in ten has no reference list. The group accepts this as a limitation and says so in the Book.
+
+
+## Separate BBL input (in development)
+
+`--bbl-recovery-dir` points to a recovery run with `versions.jsonl` and `files/`, separate from every M1 `--data-root`. The parser checks hashes and maps each recovered BBL by paper/version; it never copies BBL files into M1 corpus. References from TeX and `.bib` retain priority; the external BBL is a fallback when these yield no entries. A local and an external BBL on the same version is rejected. Recovered does not imply parseable references.
+
+The enriched runner pins corpus content, recovery journal and parser settings in the work directory. Its checkpoint sync publishes an immutable journal snapshot only after its referenced shards are copied and hashed. Session loss is marked incomplete; actual Colab smoke and interruption tests remain pending. These changes do not alter M1 crawl benchmark measurements. See [the parser flow](../m2_parser_flow.md).

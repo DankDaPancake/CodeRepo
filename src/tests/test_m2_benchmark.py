@@ -59,3 +59,28 @@ def test_several_data_roots_are_passed_to_the_runner(corpus, tmp_path):  # noqa:
     assert main(args) == 0  # an empty second run is fine: the papers come from the first
     summary = {r["metric"]: r for r in read(tmp_path / "bench" / "m2_benchmark_summary.csv")}
     assert summary["papers"]["value"] == "3"
+
+
+def test_failed_session_report_write_preserves_previous_session(corpus, tmp_path, monkeypatch):  # noqa: F811
+    import pytest
+
+    import src.benchmark.m2_benchmark as bm
+
+    report = tmp_path / "report"
+    report.mkdir()
+    old = {"session_id": 1, "wall_s": 1, "output_mb": 0, "returncode": 0, "command": []}
+    sessions = report / "m2_sessions.jsonl"
+    original = json.dumps(old) + "\n"
+    sessions.write_text(original, encoding="utf8")
+    dumps = bm.json.dumps
+
+    def fail_on_new(value, *args, **kwargs):
+        if isinstance(value, dict) and value.get("session_id") == 1:
+            raise RuntimeError("interrupted report")
+        return dumps(value, *args, **kwargs)
+
+    monkeypatch.setattr(bm.json, "dumps", fail_on_new)
+    result = {"wall": 1, "returncode": 0, "started_at": "now", "cmd": [], "samples": []}
+    with pytest.raises(RuntimeError, match="interrupted report"):
+        bm.write_report(result, report, tmp_path / "work", tmp_path / "out", [corpus])
+    assert sessions.read_text(encoding="utf8") == original

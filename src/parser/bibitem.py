@@ -37,6 +37,7 @@ Conventions fixed here (the ``bibtex`` table has no column for them):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -897,7 +898,17 @@ def cite_keys(text: str) -> set[str]:
     return keys
 
 
-def extract_references(tex: TexVersion, files: list[str]) -> VersionRefs:
+class BBLIntegrityError(ValueError):
+    """A recovered bibliography no longer matches its recorded bytes."""
+
+
+def extract_references(
+    tex: TexVersion,
+    files: list[str],
+    *,
+    external_bbl: list[Path] | None = None,
+    external_hashes: dict[Path, str] | None = None,
+) -> VersionRefs:
     """References of one gathered version: ``files`` is ``GatherResult.files`` (root first)."""
     refs = VersionRefs()
     code = "\n".join(tex.tex[f].code for f in files)
@@ -947,13 +958,33 @@ def extract_references(tex: TexVersion, files: list[str]) -> VersionRefs:
                 else:
                     refs.n_bib_unused += 1
     if not refs.entries:  # nothing else: a .bbl kept by the crawler for exactly this case
-        for path in sorted(tex.dir.rglob("*.bbl")):
-            found = parse_bibitems(read_tex(path))
+        local_bbl = sorted(tex.dir.rglob("*.bbl"))
+        if local_bbl and external_bbl:
+            raise ValueError("Both local and external BBL files exist for this version")
+        for path in local_bbl or sorted(external_bbl or []):
+            if external_hashes is not None and path in (external_bbl or []):
+                try:
+                    data = path.read_bytes()
+                except OSError as exc:
+                    raise BBLIntegrityError(f"BBL integrity failure at read: {path}") from exc
+                if hashlib.sha256(data).hexdigest() != external_hashes.get(path):
+                    raise BBLIntegrityError(f"BBL integrity failure at read: {path}")
+                try:
+                    text = data.decode("utf8")
+                except UnicodeDecodeError:
+                    text = data.decode("latin-1")
+            else:
+                text = read_tex(path)
+            found = parse_bibitems(text)
             for entry in found:
                 entry.source = "bbl"
             refs.entries.extend(found)
             refs.n_bibitems += len(found)
-            refs.bbl_files.append(path.relative_to(tex.dir).as_posix())
+            refs.bbl_files.append(
+                path.relative_to(tex.dir).as_posix()
+                if path.is_relative_to(tex.dir)
+                else f"external:{path.name}"
+            )
     return refs
 
 

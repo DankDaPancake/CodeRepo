@@ -129,3 +129,44 @@ def test_the_restore_is_verified_and_outside_the_benchmark(cells):
 def test_the_book_build_never_runs_it():
     meta = json.loads(PATH.read_text(encoding="utf-8"))["metadata"]
     assert "skip-execution" in meta["tags"]
+
+
+def test_notebook_supplies_separate_bbl_input_to_parser(cells):
+    directory = cell(cells, "directory-config")
+    assert "BBL_RECOVERY_DIR" in directory
+    scan = cell(cells, "scan")
+    benchmark = cell(cells, "benchmark")
+    assert '"--bbl-recovery-dir"' in scan
+    assert '"--bbl-recovery-dir"' in benchmark
+
+
+def test_notebook_records_interrupted_sessions_and_requires_confirmation(cells):
+    config = cell(cells, "run-config")
+    benchmark = cell(cells, "benchmark")
+    assert "PREVIOUS_SESSION_STOPPED = False" in config
+    assert "begin_session(" in benchmark
+    assert "finish_session(" in benchmark
+    assert "annotate_report(" in benchmark
+    assert "previous_session_stopped=PREVIOUS_SESSION_STOPPED" in benchmark
+
+
+def test_qa_and_export_do_not_run_until_output_exists(cells):
+    for cid in ("verify", "export"):
+        assert "RUN_M2" in cell(cells, cid), cid
+
+
+def test_restore_checks_cached_corpus_against_pinned_checkpoint(cells):
+    restore = cell(cells, "restore-corpora")
+    assert "verify_restored_checkpoint" in restore
+    assert "crawl_index_sha256" in restore
+    assert "hashlib.sha256" in restore
+
+
+def test_notebook_starts_in_smoke_mode_with_explicit_sample(cells):
+    values = {}
+    exec(cell(cells, "directory-config"), values)
+    exec(cell(cells, "run-config"), values)
+    assert values["RUN_MODE"] == "smoke"
+    assert values["SMOKE_IDS"]
+    assert "--ids" in cell(cells, "benchmark")
+    assert '"run_mode"' in cell(cells, "write-manifest")
