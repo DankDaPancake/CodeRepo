@@ -136,7 +136,7 @@ def _valid_record(rec, root):
     return True
 
 
-def recover(journals, output, *, client=None, limit=None):
+def recover(journals, output, *, client=None, limit=None, on_progress=None):
     states, output = _inputs(journals, output, "bbl-recovery")
     del states
     candidates = select_candidates(journals)
@@ -154,12 +154,24 @@ def recover(journals, output, *, client=None, limit=None):
         path = output / "versions.jsonl"
         state = read_journal(path) if path.exists() else {}
         client = client or make_client()
-        for item in candidates[:limit] if limit is not None else candidates:
+        selected = candidates[:limit] if limit is not None else candidates
+        for completed, item in enumerate(selected, 1):
             pid, version = item["arxiv_id"], item["version"]
             old = state.get((pid, version))
             if old and (
                 _valid_record(old, output) or old.get("status") in {"no_bbl", "unavailable"}
             ):
+                if on_progress:
+                    on_progress(
+                        dict(
+                            completed=completed,
+                            total=len(selected),
+                            arxiv_id=pid,
+                            version=version,
+                            status=old["status"],
+                            skipped=True,
+                        )
+                    )
                 continue
             version_dir = output / "files" / to_folder_name(pid) / f"v{version}"
             if version_dir.is_symlink():
@@ -207,6 +219,17 @@ def recover(journals, output, *, client=None, limit=None):
             except BlockedError as exc:
                 record.update(status="inconclusive", reason=str(exc))
                 _append(path, record)
+                if on_progress:
+                    on_progress(
+                        dict(
+                            completed=completed,
+                            total=len(selected),
+                            arxiv_id=pid,
+                            version=version,
+                            status=record["status"],
+                            skipped=False,
+                        )
+                    )
                 raise
             except ValueError as exc:
                 record.update(status="unsafe_or_limit", reason=str(exc))
@@ -214,7 +237,17 @@ def recover(journals, output, *, client=None, limit=None):
                 record.update(status="inconclusive", reason=f"{type(exc).__name__}: {exc}")
             _append(path, record)
             state[(pid, version)] = record
-            print(f"{pid}v{version}: {record['status']}", flush=True)
+            if on_progress:
+                on_progress(
+                    dict(
+                        completed=completed,
+                        total=len(selected),
+                        arxiv_id=pid,
+                        version=version,
+                        status=record["status"],
+                        skipped=False,
+                    )
+                )
         summary = dict(Counter(r["status"] for r in state.values()))
         _write(
             output / "summary.json",

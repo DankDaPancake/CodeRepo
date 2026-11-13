@@ -9,3 +9,7 @@
 Resume bằng cách chạy lại notebook với cùng ZIP và output. File đã khôi phục chỉ được bỏ qua khi hash khớp; kết quả không kết luận được thử lại. `no_bbl` và `unavailable` sẽ không tự thử lại trong cùng output; nếu cần lần thử mới, đổi tên thư mục output. Nếu Colab bị ngắt và `.running` còn tồn tại, chỉ xóa thư mục khóa sau khi kiểm tra không có phiên khác đang chạy. Nếu journal bị hỏng, giữ nguyên để kiểm tra.
 
 `files/<paper>/vN/` chứa .bbl; `versions.jsonl` lưu trạng thái, provenance và hash; `summary.json` thống kê. `unsafe_or_limit` là cần xem xét, không phải bằng chứng không có .bbl. Kết quả lưu riêng, chưa được nhập vào corpus/M2. Version v1 từ S3 trước đây là suy luận; không khẳng định archive v1 tải từ arXiv trùng byte với S3.
+
+Thanh tiến độ hiển thị số phiên bản đã xử lý trên tổng số phiên bản được chọn, gồm các record đã xác minh và bỏ qua khi resume; mã trạng thái mới nhất vẫn hiển thị. Cảnh báo và lỗi mạng vẫn được giữ.
+
+Notebook kiểm tra SHA-256 của mã recovery đã chuẩn hóa xuống dòng. Sau khi cập nhật `main`, hãy dựng lại và upload ZIP từ cùng revision với notebook rồi khởi động lại runtime Colab. ZIP cũ không khớp sẽ bị từ chối trước khi crawl; vẫn giữ nguyên `OUTPUT` để resume.
