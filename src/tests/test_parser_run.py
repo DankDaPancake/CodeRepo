@@ -609,3 +609,31 @@ def test_runner_stops_if_external_bbl_changes_after_preflight(corpus, tmp_path):
     )
     with pytest.raises(BBLIntegrityError):
         go(corpus, tmp_path, options=options)
+
+
+def test_progress_reports_every_25_papers_and_finishes(tmp_path, capsys):
+    root = tmp_path / "corpus-progress"
+    for i in range(1, 28):
+        make_paper(root, f"2606.{i:05}", [{"main.tex": DOC % "Text."}])
+    run(root, tmp_path / "out-progress", tmp_path / "work-progress", options=FAKE, progress=True)
+    output = capsys.readouterr().err
+    assert "25/27" in output
+    assert "27/27" in output
+
+
+def test_resume_progress_includes_already_committed_papers(tmp_path, capsys):
+    root = tmp_path / "corpus-resume-progress"
+    for i in range(1, 28):
+        make_paper(root, f"2606.{i:05}", [{"main.tex": DOC % "Text."}])
+    run(
+        root,
+        tmp_path / "out-progress",
+        tmp_path / "work-progress",
+        options=FAKE,
+        limit=25,
+        progress=False,
+    )
+    run(root, tmp_path / "out-progress", tmp_path / "work-progress", options=FAKE, progress=True)
+    output = capsys.readouterr().err
+    assert "25/27" in output
+    assert "27/27" in output

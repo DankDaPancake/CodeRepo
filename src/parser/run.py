@@ -687,7 +687,15 @@ def run(
             next_shard += 1
             buffer, buffered_rows = [], 0
 
-        bar = tqdm(total=len(pending), unit="paper", disable=not progress, dynamic_ncols=True)
+        bar = tqdm(
+            total=len(selected),
+            initial=len(selected) - len(pending),
+            unit="paper",
+            disable=not progress,
+            dynamic_ncols=True,
+            mininterval=0,
+        )
+        unreported = 0
         try:
             for outcome in _outcomes(pending, options, crawl_index(crawl_work_dir), workers):
                 this_run.append(outcome)
@@ -695,10 +703,15 @@ def run(
                 buffered_rows += sum(count_rows(outcome.rows).values())
                 if outcome.error:
                     log.warning("%s failed: %s", outcome.arxiv_id, outcome.error)
-                bar.update(1)
+                unreported += 1
+                if unreported == 25:
+                    bar.update(unreported)
+                    unreported = 0
                 if len(buffer) >= shard_papers or buffered_rows >= shard_rows:
                     commit()
         finally:
+            if unreported:
+                bar.update(unreported)
             bar.close()
             commit()  # a Ctrl+C or an error keeps the papers already parsed
         interrupted = False

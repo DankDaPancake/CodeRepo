@@ -167,6 +167,52 @@ def test_notebook_starts_in_smoke_mode_with_explicit_sample(cells):
     exec(cell(cells, "directory-config"), values)
     exec(cell(cells, "run-config"), values)
     assert values["RUN_MODE"] == "smoke"
-    assert values["SMOKE_IDS"]
-    assert "--ids" in cell(cells, "benchmark")
+    assert values["SMOKE_LIMIT"] == 1000
+    assert values["SMOKE_OFFSET"] == 0
+    assert '"--limit"' in cell(cells, "benchmark")
+    assert '"--offset"' in cell(cells, "benchmark")
     assert '"run_mode"' in cell(cells, "write-manifest")
+
+
+def test_new_runs_track_main_but_resume_uses_saved_revision(cells):
+    values = {}
+    exec(cell(cells, "run-config"), values)
+    assert values["CODE_REF"] == "main"
+    assert values["REPO"] == "https://github.com/hcmus-arxiv-nhom1/CodeRepo.git"
+    assert '["code_revision"]' in cell(cells, "resolve-revision")
+    manifest = cell(cells, "write-manifest")
+    assert '"smoke_limit"' in manifest and '"smoke_offset"' in manifest
+
+
+def test_smoke_manifest_rejects_changed_selection_on_resume(cells, tmp_path):
+    bbl = tmp_path / "bbl"
+    bbl.mkdir()
+    (bbl / "versions.jsonl").write_text("{}\n", encoding="utf8")
+    drive = tmp_path / "drive"
+    (drive / "a").mkdir(parents=True)
+    (drive / "a/INDEX.json").write_text("{}", encoding="utf8")
+    saved = tmp_path / "M2_MANIFEST.json"
+    values = {
+        "Path": Path,
+        "json": json,
+        "BBL_RECOVERY_DIR": str(bbl),
+        "RUN_MODE": "smoke",
+        "SMOKE_LIMIT": 1000,
+        "SMOKE_OFFSET": 0,
+        "EXPECTED_IDS": 20000,
+        "M2_RUN_ID": "smoke-1000",
+        "REVISION": "abc",
+        "RUNS": {"a": "a"},
+        "DRIVE": drive,
+        "WORKERS": 2,
+        "SHARD_PAPERS": 100,
+        "PAPER_TIMEOUT_S": 600,
+        "preflight": {"revision": ["abc"]},
+        "RESUME": False,
+        "saved_path": saved,
+    }
+    exec(cell(cells, "write-manifest"), values)
+    values["RESUME"] = True
+    values["SMOKE_OFFSET"] = 1
+    with pytest.raises(ValueError, match="smoke_offset"):
+        exec(cell(cells, "write-manifest"), values)

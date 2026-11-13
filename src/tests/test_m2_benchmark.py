@@ -84,3 +84,10 @@ def test_failed_session_report_write_preserves_previous_session(corpus, tmp_path
     with pytest.raises(RuntimeError, match="interrupted report"):
         bm.write_report(result, report, tmp_path / "work", tmp_path / "out", [corpus])
     assert sessions.read_text(encoding="utf8") == original
+
+
+def test_benchmark_shows_parser_progress(corpus, tmp_path, capfd):  # noqa: F811
+    assert main(command(corpus, tmp_path, "--workers", "1")) == 0
+    output = capfd.readouterr().err
+    assert "paper" in output
+    assert "3/3" in output
