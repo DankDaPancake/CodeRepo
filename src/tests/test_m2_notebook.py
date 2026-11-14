@@ -164,11 +164,12 @@ def test_restore_checks_cached_corpus_against_pinned_checkpoint(cells):
     assert "hashlib.sha256" in restore
 
 
-def test_notebook_starts_in_smoke_mode_with_explicit_sample(cells):
+def test_notebook_starts_in_full_mode_and_can_select_a_smoke_sample(cells):
     values = {}
     exec(cell(cells, "directory-config"), values)
     exec(cell(cells, "run-config"), values)
-    assert values["RUN_MODE"] == "smoke"
+    assert values["RUN_MODE"] == "full"
+    assert values["M2_RUN_ID"] == "m2-full-01"
     assert values["SMOKE_LIMIT"] == 1000
     assert values["SMOKE_OFFSET"] == 0
     assert '"--limit"' in cell(cells, "benchmark")

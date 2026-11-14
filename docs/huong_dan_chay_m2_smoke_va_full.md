@@ -11,7 +11,7 @@ This guide starts after the M2 notebook changes have been merged into CodeRepo `
 
 ## Smoke: 1,000 papers
 
-The default configuration is:
+To run this optional sample, change the configuration to:
 
 ```python
 RUN_MODE = "smoke"
@@ -29,7 +29,7 @@ Run the cells in order. Mount Drive when asked. The five M1 checkpoints are rest
 
 After the benchmark finishes, review the status output, table checks and results under `M2_DRIVE_DIR/M2_RUN_ID/`. Confirm that `m2_papers.csv` contains 1,000 papers, review `m2_versions.csv` statuses and BBL/reference counts, and inspect the logs and `measurement_audit.json`. A zero process exit does not by itself prove every version parsed correctly. Smoke timing and output counts are not the official full-corpus benchmark.
 
-Before starting full processing, exercise interruption and resume on a separate smoke run and compare its output and audit with an uninterrupted smoke run. Verify that the session/checkpoint state was synced to Drive; an interruption can lose work since the latest successful sync. Do not run two runtimes against the same run ID.
+An interruption can lose work since the latest successful sync. Do not run two runtimes against the same run ID.
 
 ## Resume an interrupted run
 
@@ -40,7 +40,7 @@ Before starting full processing, exercise interruption and resume on a separate 
 
 ## Full 20,000-paper run
 
-Start only after reviewing the smoke output and interruption/resume evidence. Use a **new** run ID and configuration:
+The notebook defaults to full mode. Use a **new** run ID and configuration:
 
 ```python
 RUN_MODE = "full"
@@ -50,7 +50,7 @@ RUN_M2 = True
 CODE_REF = "main"
 ```
 
-The smoke limit and offset are ignored in full mode. The input check requires the exact assigned 20,000 IDs, a complete BBL candidate/journal/summary reconciliation, verified file hashes and matching paper/version mappings. It stops on inconsistencies instead of treating them as successful parsing.
+The smoke limit and offset are ignored in full mode. The 1,000-paper Colab smoke and interruption/resume comparison have not been completed, so the full run is the first end-to-end validation at this scale. The input check requires the exact assigned 20,000 IDs, a complete BBL candidate/journal/summary reconciliation, verified file hashes and matching paper/version mappings. It stops on inconsistencies instead of treating them as successful parsing.
 
 Run cells in order. The progress bar counts papers, not versions; each paper may contain several versions. Resource measurements include parser-side corpus and BBL verification. Restore is separately timed setup, while periodic Drive sync competes for resources and can affect wall time. The corpus `input_size` metric excludes the separate BBL folder on Drive; report its storage separately. After completion, inspect the run summary, version and paper CSVs, table and structure checks, random-paper audit and measurement audit before publishing results or declaring M2 complete. Export files remain under the full run's Drive directory.
 
@@ -114,4 +114,4 @@ for run_id, rel in RUNS.items():
 
 If interrupted, leave all files intact and use a fresh helper path or the existing helper checkout in a new process. Review the JSON counts: `reused` are files whose existing local hash matched; `copied` includes files newly copied and `fallback` counts those retrieved from a preserved checkpoint object. Each existing file is checked against the original pinned index before reuse. If the index changed, an unexpected corpus file exists or no verified source is available, stop and inspect the error; do not remove the evidence automatically.
 
-Once all five helper invocations succeed, rerun the **original** restore cell. It sees the compatible checkpoint heads, verifies the local corpus, builds `DATA_ROOTS` and `CRAWL_WORK_DIRS`, and can proceed to the smoke parser without another corpus copy. Local verification still takes time. A full M2 run remains a separate run, as described above. Actual Colab/Drive speed and this same-runtime recovery procedure still require a live smoke test.
+Once all five helper invocations succeed, rerun the **original** restore cell. It sees the compatible checkpoint heads, verifies the local corpus, builds `DATA_ROOTS` and `CRAWL_WORK_DIRS`, and can proceed with the original notebook revision without another corpus copy. Local verification still takes time. A full M2 run remains a separate run, as described above. Four remaining runs were restored with the helper in Colab; no full parser run has been completed yet.
