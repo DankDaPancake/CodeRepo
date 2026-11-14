@@ -74,7 +74,14 @@ helper = Path("/content/m2-restore-helper")
 if helper.exists():
     raise FileExistsError(f"Use a new empty helper path: {helper}")
 subprocess.run(
-    ["git", "clone", "--depth", "1", "https://github.com/hcmus-arxiv-nhom1/CodeRepo.git", str(helper)],
+    [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "https://github.com/hcmus-arxiv-nhom1/CodeRepo.git",
+        str(helper),
+    ],
     check=True,
 )
 helper_revision = subprocess.check_output(
@@ -86,11 +93,19 @@ for run_id, rel in RUNS.items():
     print(f"Recovering {run_id}", flush=True)
     subprocess.run(
         [
-            sys.executable, "-m", "src.benchmark.m2_restore",
-            "--remote", str(DRIVE / rel),
-            "--local", str(Path(LOCAL_ROOT) / run_id),
-            "--pinned-index-sha256", manifest["crawl_index_sha256"][run_id],
-            "--workers", "8", "--reuse-partial", "--legacy-checkpoint",
+            sys.executable,
+            "-m",
+            "src.benchmark.m2_restore",
+            "--remote",
+            str(DRIVE / rel),
+            "--local",
+            str(Path(LOCAL_ROOT) / run_id),
+            "--pinned-index-sha256",
+            manifest["crawl_index_sha256"][run_id],
+            "--workers",
+            "8",
+            "--reuse-partial",
+            "--legacy-checkpoint",
         ],
         cwd=helper,
         check=True,
