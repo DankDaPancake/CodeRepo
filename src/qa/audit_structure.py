@@ -123,7 +123,24 @@ def count_tree(rows: list[dict]) -> dict[str, int]:
     }
 
 
-def _audit_shard(data_root, shard: Path, expected_status=None):
+def present_papers(data_root) -> set[str]:
+    """Folder names of the papers whose source is under ``data_root`` (one root or several)."""
+    return {
+        p.name
+        for root in as_paths(data_root)
+        if root.is_dir()
+        for p in root.iterdir()
+        if p.is_dir()
+    }
+
+
+def _audit_shard(data_root, shard: Path, expected_status=None, present=None):
+    """Compare the versions of one shard with their source.
+
+    ``present`` (a set of paper folder names) lets a partial source corpus be audited: papers
+    whose folder is not in it are skipped. A paper that is present must have every parsed
+    version, as always.
+    """
     elements: dict[str, dict] = {}
     edges: dict[tuple, list[str]] = {}
     for row in pq.read_table(
@@ -141,6 +158,8 @@ def _audit_shard(data_root, shard: Path, expected_status=None):
                 raise ValueError(f"Unexpected hierarchy version: {arxiv_id}v{version}")
             if status != "parsed":
                 continue
+        if present is not None and to_folder_name(arxiv_id) not in present:
+            continue
         vdir = next(
             (
                 root / to_folder_name(arxiv_id) / f"v{version}"
@@ -185,8 +204,15 @@ def audit_resumable(
     max_shard_rows: int = 500_000,
     journal: Path | None = None,
     expected_hashes: dict | None = None,
+    allow_missing_sources: bool = False,
 ) -> dict:
-    """Audit one shard at a time, checkpointing against the supplied verified input identity."""
+    """Audit one shard at a time, checkpointing against the supplied verified input identity.
+
+    ``allow_missing_sources`` audits a *subset*: only the papers whose folder is under
+    ``data_root`` (for instance one of the five crawl runs) are compared, the others are counted
+    as skipped. The summary says so, and the checkpoint identity records the runs, so a subset
+    audit can never be mistaken for, or resumed as, a full one.
+    """
     if not identity:
         raise ValueError("Structural audit identity required")
     out_dir, report = Path(out_dir), Path(report)
@@ -195,6 +221,11 @@ def audit_resumable(
     report.mkdir(parents=True, exist_ok=True)
     expected_status = None
     metadata = {"identity": identity, "journal_sha256": None}
+    present = present_papers(data_root) if allow_missing_sources else None
+    if allow_missing_sources:
+        metadata["source_scope"] = sorted(
+            f"{root.parent.parent.name}" for root in as_paths(data_root)
+        )
     if journal is not None:
         from src.qa.qa_inputs import read_assignments
 
@@ -248,7 +279,7 @@ def audit_resumable(
         else:
             saved = {
                 "hashes": hashes,
-                "rows": list(_audit_shard(data_root, shard, expected_status)),
+                "rows": list(_audit_shard(data_root, shard, expected_status, present)),
             }
             if expected_hashes is not None:
                 verify_shard(shard, expected_hashes[shard.name])
@@ -281,12 +312,27 @@ def audit_resumable(
                     agreement[key] += row[f"{key}_agree"]
     if expected_status is not None:
         expected_parsed = {key for key, status in expected_status.items() if status == "parsed"}
+        skipped = 0
+        if present is not None:
+            kept = {key for key in expected_parsed if to_folder_name(key[0]) in present}
+            skipped = len(expected_parsed) - len(kept)
+            expected_parsed = kept
         missing = expected_parsed - observed
         extra = observed - expected_parsed
         if missing or extra:
             raise ValueError(f"Parsed versions missing or unexpected: {len(missing)}, {len(extra)}")
     os.replace(temp_csv, report / "structure_audit.csv")
     summary = {
+        "scope": (
+            {
+                "kind": "subset",
+                "source_runs": metadata["source_scope"],
+                "papers_with_source": len(present),
+                "parsed_versions_skipped_without_source": skipped if expected_status else None,
+            }
+            if present is not None
+            else {"kind": "all"}
+        ),
         "versions": count,
         "agreement": agreement,
         "agreement_rates": {

@@ -45,6 +45,12 @@ def test_qa_notebook_wires_the_real_checker_and_distinct_evidence():
     assert "draw(" in by_id["qa-sample"]
     assert "src.qa.audit_sample" in by_id["qa-score"]
     assert "m2_qa_evidence" in by_id["qa-export"]
+    # a subset audit: one run restored, only its papers compared, and said so in the evidence
+    values = {}
+    exec(by_id["qa-config"], values)
+    assert values["SOURCE_RUNS"] is None  # the default is still all five runs
+    assert "SOURCE_RUNS" in by_id["qa-corpus"] and "allow_missing_sources" in by_id["qa-structure"]
+    assert "present_papers" in by_id["qa-sample"] and "complete_subset" in by_id["qa-export"]
     assert "NotImplementedError" not in "\n".join(by_id.values())
 
 
@@ -62,7 +68,13 @@ def test_evidence_export_does_not_embed_its_previous_zip(tmp_path):
     (qa / "m2_qa_evidence.zip").write_bytes(b"old")
     (qa / ".qa-sample-interrupted").mkdir()
     (qa / ".qa-sample-interrupted/partial.md").write_text("incomplete")
-    values = {"RUN_QA": True, "LOCAL": local, "QA_DESTINATION": qa, "shutil": shutil}
+    values = {
+        "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "LOCAL": local,
+        "QA_DESTINATION": qa,
+        "shutil": shutil,
+    }
     values["table_report"] = {"ok": True}  # a stale report must not imply this session passed
     exec("".join(export["source"]), values)
     with zipfile.ZipFile(qa / "m2_qa_evidence.zip") as archive:
@@ -95,7 +107,13 @@ def test_evidence_copy_failure_preserves_previous_archive(tmp_path, monkeypatch)
     with pytest.raises(OSError, match="interrupted"):
         exec(
             "".join(export["source"]),
-            {"RUN_QA": True, "LOCAL": local, "QA_DESTINATION": qa, "shutil": shutil},
+            {
+                "RUN_QA": True,
+                "RUN_SOURCE_QA": True,
+                "LOCAL": local,
+                "QA_DESTINATION": qa,
+                "shutil": shutil,
+            },
         )
     assert destination.read_bytes() == b"previous"
 
@@ -126,6 +144,8 @@ def test_interrupted_sample_can_be_retried_without_deleting_user_data(tmp_path, 
     monkeypatch.setattr(inputs, "verify_checkpoint", lambda *args, **kwargs: {})
     scope = {
         "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "SOURCE_RUNS": None,
         "QA_DESTINATION": qa,
         "LOCAL": local,
         "Path": Path,
@@ -156,6 +176,8 @@ def test_structure_does_not_run_when_source_restore_is_incomplete(tmp_path):
     cell = next(c for c in cells if c.get("id") == "qa-structure")
     scope = {
         "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "SOURCE_RUNS": None,
         "DATA_ROOTS": [],
         "local_out": tmp_path,
         "QA_DESTINATION": tmp_path / "qa",
@@ -186,6 +208,8 @@ def test_failed_restore_invalidates_previous_stage_success(tmp_path, monkeypatch
     monkeypatch.setattr(inputs, "restore_shards", fail)
     scope = {
         "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "SOURCE_RUNS": None,
         "LOCAL": tmp_path / "local",
         "SOURCE": tmp_path,
         "hashes": {},
@@ -220,6 +244,8 @@ def test_sample_rejects_modified_shard_after_table_check(tmp_path):
     hashes = {"shard-00000": {"file": hashlib.sha256(b"original").hexdigest()}}
     scope = {
         "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "SOURCE_RUNS": None,
         "qa_table_passed": True,
         "qa_sources_verified": True,
         "QA_DESTINATION": qa,
@@ -270,6 +296,8 @@ def test_sample_does_not_publish_if_input_changes_during_draw(tmp_path, monkeypa
     monkeypatch.setattr(sample, "draw", mutate)
     scope = {
         "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "SOURCE_RUNS": None,
         "qa_table_passed": True,
         "qa_sources_verified": True,
         "QA_DESTINATION": qa,
@@ -351,6 +379,8 @@ def test_qa_cells_run_end_to_end_and_resume(corpus, tmp_path):  # noqa: F811
         "MAX_SHARD_ROWS": 10000,
         "EXPECTED_SHARDS": 3,
         "RUN_QA": True,
+        "RUN_SOURCE_QA": True,
+        "SOURCE_RUNS": None,
         "Path": Path,
         "json": json,
         "hashlib": hashlib,

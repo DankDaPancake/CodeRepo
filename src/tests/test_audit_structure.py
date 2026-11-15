@@ -81,9 +81,9 @@ def test_structural_audit_resumes_without_repeating_finished_shard(corpus, tmp_p
     original = module._audit_shard
     called = []
 
-    def observed(roots, shard, expected_status=None):
+    def observed(roots, shard, expected_status=None, present=None):
         called.append(shard.name)
-        yield from original(roots, shard, expected_status)
+        yield from original(roots, shard, expected_status, present)
 
     monkeypatch.setattr(module, "_audit_shard", observed)
     summary = module.audit_resumable(corpus, out, qa, {"sha": "one"})
