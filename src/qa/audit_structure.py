@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -120,16 +123,24 @@ def count_tree(rows: list[dict]) -> dict[str, int]:
     }
 
 
-def audit(data_root, out_dir: Path) -> list[dict]:
+def _audit_shard(data_root, shard: Path, expected_status=None):
     elements: dict[str, dict] = {}
     edges: dict[tuple, list[str]] = {}
-    for shard in sorted(Path(out_dir).glob("shard-*")):
-        for row in pq.read_table(shard / "elements.parquet").to_pylist():
-            elements[row["element_id"]] = row
-        for row in pq.read_table(shard / "hierarchy.parquet").to_pylist():
-            edges.setdefault((row["arxiv_id"], row["version"]), []).append(row["element_id"])
-    results = []
+    for row in pq.read_table(
+        shard / "elements.parquet", columns=["element_id", "kind"]
+    ).to_pylist():
+        elements[row["element_id"]] = row
+    for row in pq.read_table(
+        shard / "hierarchy.parquet", columns=["arxiv_id", "version", "element_id"]
+    ).to_pylist():
+        edges.setdefault((row["arxiv_id"], row["version"]), []).append(row["element_id"])
     for (arxiv_id, version), ids in sorted(edges.items()):
+        if expected_status is not None:
+            status = expected_status.get((arxiv_id, version))
+            if status is None or status == "missing":
+                raise ValueError(f"Unexpected hierarchy version: {arxiv_id}v{version}")
+            if status != "parsed":
+                continue
         vdir = next(
             (
                 root / to_folder_name(arxiv_id) / f"v{version}"
@@ -139,10 +150,12 @@ def audit(data_root, out_dir: Path) -> list[dict]:
             Path("/nonexistent"),
         )
         if not vdir.is_dir():
-            continue
+            raise FileNotFoundError(f"Source version missing: {arxiv_id}v{version}")
         tex = TexVersion(vdir, paper_title(vdir))
         found = tex.gather()
         if found.root is None:
+            if expected_status is not None and expected_status.get((arxiv_id, version)) == "parsed":
+                raise ValueError(f"Expected parsed source root: {arxiv_id}v{version}")
             continue
         src = count_source(tex.expand(found.root))
         got = count_tree([elements[i] for i in ids if i in elements])
@@ -150,8 +163,140 @@ def audit(data_root, out_dir: Path) -> list[dict]:
         for measure in src:
             row[f"{measure}_source"], row[f"{measure}_tree"] = src[measure], got[measure]
             row[f"{measure}_agree"] = int(src[measure] == got[measure])
-        results.append(row)
-    return results
+        yield row
+
+
+def iter_audit(data_root, out_dir: Path):
+    """Yield source comparisons one shard at a time."""
+    for shard in sorted(Path(out_dir).glob("shard-*")):
+        yield from _audit_shard(data_root, shard)
+
+
+def audit(data_root, out_dir: Path) -> list[dict]:
+    return list(iter_audit(data_root, out_dir))
+
+
+def audit_resumable(
+    data_root,
+    out_dir: Path,
+    report: Path,
+    identity: dict,
+    on_progress=None,
+    max_shard_rows: int = 500_000,
+    journal: Path | None = None,
+    expected_hashes: dict | None = None,
+) -> dict:
+    """Audit one shard at a time, checkpointing against the supplied verified input identity."""
+    if not identity:
+        raise ValueError("Structural audit identity required")
+    out_dir, report = Path(out_dir), Path(report)
+    if report.resolve() == out_dir.resolve() or report.resolve().is_relative_to(out_dir.resolve()):
+        raise ValueError("Structural audit report overlaps input")
+    report.mkdir(parents=True, exist_ok=True)
+    expected_status = None
+    metadata = {"identity": identity, "journal_sha256": None}
+    if journal is not None:
+        from src.qa.qa_inputs import read_assignments
+
+        data = Path(journal).read_bytes()
+        read_assignments(journal)
+        if data != Path(journal).read_bytes():
+            raise ValueError("Journal changed during structural audit setup")
+        metadata["journal_sha256"] = hashlib.sha256(data).hexdigest()
+        expected_status = {}
+        for line in data.splitlines():
+            for paper in json.loads(line)["papers"]:
+                for version in paper["versions"]:
+                    expected_status[(paper["arxiv_id"], version["version"])] = version["status"]
+    checkpoint = report / "structure-checkpoints"
+    checkpoint.mkdir(exist_ok=True)
+    meta = checkpoint / "identity.json"
+    if meta.exists():
+        if json.loads(meta.read_text(encoding="utf8")) != metadata:
+            raise ValueError("Structural audit identity changed")
+    else:
+        if any(checkpoint.glob("shard-*.json")):
+            raise ValueError("Structural audit identity missing")
+        temp = meta.with_suffix(".part")
+        temp.write_text(json.dumps(metadata, sort_keys=True), encoding="utf8")
+        os.replace(temp, meta)
+    shards = sorted(out_dir.glob("shard-*"))
+    if not shards:
+        raise ValueError("No shards to audit")
+    if expected_hashes is not None and {shard.name for shard in shards} != set(expected_hashes):
+        raise ValueError("Structural audit shard manifest mismatch")
+    for done, shard in enumerate(shards, 1):
+        if expected_hashes is not None:
+            from src.qa.qa_inputs import verify_shard
+
+            verify_shard(shard, expected_hashes[shard.name])
+        hashes = {}
+        rows = sum(
+            pq.ParquetFile(shard / f"{table}.parquet").metadata.num_rows
+            for table in ("elements", "hierarchy")
+        )
+        if rows > max_shard_rows:
+            raise ValueError(f"Structural audit shard row limit exceeded: {shard.name}")
+        for table in ("elements", "hierarchy"):
+            with (shard / f"{table}.parquet").open("rb") as stream:
+                hashes[table] = hashlib.file_digest(stream, "sha256").hexdigest()
+        target = checkpoint / f"{shard.name}.json"
+        if target.exists():
+            saved = json.loads(target.read_text(encoding="utf8"))
+            if saved["hashes"] != hashes:
+                raise ValueError(f"Structural audit shard changed: {shard.name}")
+        else:
+            saved = {
+                "hashes": hashes,
+                "rows": list(_audit_shard(data_root, shard, expected_status)),
+            }
+            if expected_hashes is not None:
+                verify_shard(shard, expected_hashes[shard.name])
+            temp = target.with_suffix(".part")
+            temp.write_text(json.dumps(saved), encoding="utf8")
+            os.replace(temp, target)
+        if expected_hashes is not None:
+            verify_shard(shard, expected_hashes[shard.name])
+        if on_progress:
+            on_progress(done, len(shards))
+    temp_csv = report / ".structure_audit.part"
+    count = 0
+    observed = set()
+    agreement = {key: 0 for key in ("headings", "formulas", "floats", "items")}
+    with temp_csv.open("w", encoding="utf8", newline="") as stream:
+        writer = None
+        for shard in shards:
+            saved = json.loads((checkpoint / f"{shard.name}.json").read_text(encoding="utf8"))
+            for row in saved["rows"]:
+                key = (row["arxiv_id"], row["version"])
+                if key in observed:
+                    raise ValueError(f"Duplicate structure result: {key}")
+                observed.add(key)
+                if writer is None:
+                    writer = csv.DictWriter(stream, fieldnames=list(row))
+                    writer.writeheader()
+                writer.writerow(row)
+                count += 1
+                for key in agreement:
+                    agreement[key] += row[f"{key}_agree"]
+    if expected_status is not None:
+        expected_parsed = {key for key, status in expected_status.items() if status == "parsed"}
+        missing = expected_parsed - observed
+        extra = observed - expected_parsed
+        if missing or extra:
+            raise ValueError(f"Parsed versions missing or unexpected: {len(missing)}, {len(extra)}")
+    os.replace(temp_csv, report / "structure_audit.csv")
+    summary = {
+        "versions": count,
+        "agreement": agreement,
+        "agreement_rates": {
+            key: value / count if count else None for key, value in agreement.items()
+        },
+    }
+    temp_summary = report / ".structure_summary.part"
+    temp_summary.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf8")
+    os.replace(temp_summary, report / "structure_summary.json")
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
