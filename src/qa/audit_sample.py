@@ -97,12 +97,20 @@ def _root_of(data_root, folder: str) -> Path | str:
     return next((Path(r) for r in roots if (Path(r) / folder).is_dir()), roots[0] if roots else ".")
 
 
-def draw(out_dir: Path, work_dir: Path, report: Path, n: int, seed: int, data_root=None):
+def draw(
+    out_dir: Path,
+    work_dir: Path,
+    report: Path,
+    n: int,
+    seed: int,
+    data_root=None,
+    on_progress=None,
+):
     papers = eligible_papers(work_dir)
     chosen = random.Random(seed).sample(sorted(papers), min(n, len(papers)))
     report.mkdir(parents=True, exist_ok=True)
     sheet = []
-    for arxiv_id in sorted(chosen):
+    for done, arxiv_id in enumerate(sorted(chosen), 1):
         rec = papers[arxiv_id]
         elements = read_table(out_dir, rec["shard"], "elements", arxiv_id)
         hierarchy = read_table(out_dir, rec["shard"], "hierarchy", arxiv_id)
@@ -133,6 +141,8 @@ def draw(out_dir: Path, work_dir: Path, report: Path, n: int, seed: int, data_ro
                 "n_bibtex": len(bibtex),
             }
         )
+        if on_progress:
+            on_progress(done, len(chosen))
     with open(report / "audit_sheet.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=SHEET_COLUMNS)
         writer.writeheader()

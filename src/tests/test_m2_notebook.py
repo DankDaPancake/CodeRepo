@@ -51,15 +51,14 @@ def test_the_notebook_does_the_steps_in_order(cells):
         "preflight",
         "restore-corpora",
         "benchmark",
-        "verify",
+        "qa-link",
         "m1-stats",
         "export",
     ]
     ids = [c.get("id") for c in cells]
     assert [ids.index(i) for i in order] == sorted(ids.index(i) for i in order)
     for needle in ("restore_m2(", "--expect-assigned", "src.benchmark.m2_benchmark",
-                   "sync_to_drive(", "restore_from_drive(", "src.qa.check_tables",
-                   "src.qa.audit_structure", "src.qa.audit_sample",
+                   "sync_to_drive(", "restore_from_drive(",
                    "src.analysis.stats"):  # fmt: skip
         assert needle in src, needle
 
@@ -150,9 +149,10 @@ def test_notebook_records_interrupted_sessions_and_requires_confirmation(cells):
     assert "previous_session_stopped=PREVIOUS_SESSION_STOPPED" in benchmark
 
 
-def test_qa_and_export_do_not_run_until_output_exists(cells):
-    for cid in ("verify", "export"):
-        assert "RUN_M2" in cell(cells, cid), cid
+def test_qa_moved_to_separate_notebook_and_export_is_guarded(cells):
+    assert "RUN_M2" in cell(cells, "export")
+    assert "arxiv_nhom1_m2_qa.ipynb" in cell(cells, "qa-link")
+    assert not any(c.get("id") in {"verify", "verify-guide"} for c in cells)
 
 
 def test_restore_checks_cached_corpus_against_pinned_checkpoint(cells):

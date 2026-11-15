@@ -91,6 +91,20 @@ def test_draw_writes_trees_with_shared_elements_and_an_empty_sheet(tmp_path):
     assert all(rows[0][c] == "" for c in CRITERIA)
 
 
+def test_draw_reports_progress(tmp_path):
+    out, work = write_output(tmp_path, ["2606.00001", "2606.00002"])
+    progress = []
+    draw(
+        out,
+        work,
+        tmp_path / "audit",
+        n=2,
+        seed=1,
+        on_progress=lambda done, total: progress.append((done, total)),
+    )
+    assert progress == [(1, 2), (2, 2)]
+
+
 def fill(path, marks):
     with open(path, encoding="utf-8", newline="") as fh:
         rows = list(csv.DictReader(fh))
