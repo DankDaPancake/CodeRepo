@@ -105,8 +105,12 @@ def draw(
     seed: int,
     data_root=None,
     on_progress=None,
+    present=None,
 ):
+    """Draw ``n`` papers; ``present`` (folder names) keeps only papers whose source exists."""
     papers = eligible_papers(work_dir)
+    if present is not None:
+        papers = {i: rec for i, rec in papers.items() if rec["folder"] in present}
     chosen = random.Random(seed).sample(sorted(papers), min(n, len(papers)))
     report.mkdir(parents=True, exist_ok=True)
     sheet = []
