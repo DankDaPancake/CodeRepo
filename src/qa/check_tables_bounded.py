@@ -148,6 +148,7 @@ def check_run(
     checkpoint_dir: Path | None = None,
     identity: dict | None = None,
     expected_hashes: dict | None = None,
+    empty_without_root: bool = False,
 ) -> dict:
     """Check the committed partition with a hard cap on each shard's loaded rows."""
     assignments = validate_partition(
@@ -187,6 +188,7 @@ def check_run(
             "journal_sha256": hashlib.sha256(Path(journal).read_bytes()).hexdigest(),
             "max_shard_rows": max_shard_rows,
             "version": 2,
+            "empty_without_root": empty_without_root,
         }
         meta_path = checkpoint_dir / "identity.json"
         if meta_path.exists():
@@ -258,6 +260,7 @@ def check_run(
                 item["version"]
                 for item in records[paper]["versions"]
                 if item["status"] != "missing"
+                and not (empty_without_root and item["status"] == "empty")
             }
             versions += len({edge[0] for edge in group["edges"]})
             found = check_paper(to_folder_name(paper), **group, expected_versions=expected_versions)
