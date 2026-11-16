@@ -70,13 +70,13 @@ def test_filter_keeps_all_nonempty_rows_and_bibtex(corpus, tmp_path):  # noqa: F
         assert all(row["kind"] == "document" for row in before if row not in after)
 
 
-def test_notebook_valid_and_disabled_by_default():
+def test_notebook_valid_and_ready_for_full_run():
     import nbformat
 
     notebook = nbformat.read("src/notebooks/arxiv_nhom1_m2_filter_empty.ipynb", as_version=4)
     nbformat.validate(notebook)
     code = "\n".join(cell.source for cell in notebook.cells if cell.cell_type == "code")
-    assert "RUN_FILTER = False" in code
+    assert "RUN_FILTER = True" in code
     assert "empty_without_root=True" in code
     for cell in notebook.cells:
         if cell.cell_type == "code":
