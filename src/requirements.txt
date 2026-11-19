@@ -14,4 +14,5 @@ kaggle>=1.6.0
 redis>=5.0.0
 
 huggingface_hub>=0.34,<2
+datasets>=2.14  # M3: reload check of the published dataset (src/m3/hf_dataset.py)
 filelock>=3.13,<4
