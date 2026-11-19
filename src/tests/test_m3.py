@@ -205,3 +205,41 @@ def test_select_analysis_crosscheck_hf(tmp_path, capsys):
     assert not (pkg / "labels" / "manual" / "2604-20600.csv").exists()
     card = (pkg / "README.md").read_text(encoding="utf-8")
     assert "config_name: predictions" in card and "path: bibtex/*.parquet" in card
+
+
+def test_restore_inputs_copies_only_verified_references(tmp_path):
+    import hashlib
+
+    from src.m3.restore_inputs import restore_bibtex, restore_references
+
+    m1, m2run = tmp_path / "m1", tmp_path / "m2run"
+    remote = m1 / "runs" / "r1"
+    good = b'{"references": []}'
+    sha = hashlib.sha256(good).hexdigest()
+    (remote / "data/corpus/2606-25801").mkdir(parents=True)
+    (remote / "data/corpus/2606-25801/references.json").write_bytes(b"newer, changed")
+    (remote / ".checkpoint-objects" / sha[:2]).mkdir(parents=True)
+    (remote / ".checkpoint-objects" / sha[:2] / sha).write_bytes(good)  # verified fallback
+    files = {
+        "data/corpus/2606-25801/references.json": sha,
+        "data/corpus/2606-25801/v1/main.tex": "0" * 64,  # not copied
+        "work/versions.jsonl": "0" * 64,
+    }
+    (remote / "INDEX.json").write_text(json.dumps({"files": files}), encoding="utf-8")
+    (m2run / "out/shard-00000").mkdir(parents=True)
+    (m2run / "out/shard-00000/bibtex.parquet").write_bytes(b"pq")
+    (m2run / "M2_MANIFEST.json").write_text(
+        json.dumps({"runs": {"r1": "runs/r1"}}), encoding="utf-8"
+    )
+
+    corpus = tmp_path / "corpus"
+    assert restore_references(m2run, m1, corpus) == {"copied": 1, "reused": 0, "total": 1}
+    assert (corpus / "2606-25801/references.json").read_bytes() == good
+    assert not (corpus / "2606-25801/v1").exists()
+    assert restore_references(m2run, m1, corpus)["reused"] == 1
+    assert restore_bibtex(m2run, tmp_path / "out") == {"copied": 1, "reused": 0, "total": 1}
+
+    (remote / ".checkpoint-objects" / sha[:2] / sha).write_bytes(b"bad")
+    (corpus / "2606-25801/references.json").unlink()
+    with pytest.raises(ValueError, match="indexed hash"):
+        restore_references(m2run, m1, corpus)

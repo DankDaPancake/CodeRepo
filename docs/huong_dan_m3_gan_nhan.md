@@ -19,6 +19,8 @@ smith2020,no,yes,...                      <- mỗi hàng là một mục BibTeX,
 
 ## Chuẩn bị trên Colab
 
+**Cách nhanh nhất:** mở notebook [arxiv_nhom1_m3_labeling.ipynb](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/feat/m3-labeling-tien/src/notebooks/arxiv_nhom1_m3_labeling.ipynb) (sau khi merge, đổi `feat/m3-labeling-tien` trong link thành `main`). Notebook làm đủ các bước dưới đây, mỗi bước một ô. Nó chỉ copy `bibtex.parquet` của M2 và `references.json` của M1 từ Drive (có kiểm tra SHA-256), không restore cả corpus. Các lệnh bên dưới dành cho ai muốn tự chạy.
+
 ```python
 !git clone -b feat/m3-labeling-tien https://github.com/hcmus-arxiv-nhom1/CodeRepo /content/CodeRepo
 %cd /content/CodeRepo
