@@ -43,10 +43,16 @@ def _copy_verified(sources: list[Path], dest: Path, expected: str) -> str:
         tmp.unlink(missing_ok=True)
 
 
-def restore_references(
-    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=8, on_progress=None
-):
-    """Copy every indexed ``data/corpus/<folder>/references.json`` into ``corpus_dir/<folder>/``."""
+def restore_m1_json(
+    m2_run_dir: Path,
+    m1_drive_dir: Path,
+    corpus_dir: Path,
+    filenames: tuple[str, ...] = ("metadata.json", "references.json"),
+    workers: int = 8,
+    on_progress=None,
+) -> dict[str, int]:
+    """Copy indexed M1 JSON files (e.g. ``metadata.json``, ``references.json``) with SHA-256."""
+    wanted = set(filenames)
     manifest = json.loads((Path(m2_run_dir) / "M2_MANIFEST.json").read_text(encoding="utf-8"))
     jobs = []
     for rel in manifest["runs"].values():
@@ -54,11 +60,7 @@ def restore_references(
         index = json.loads((remote / "INDEX.json").read_text(encoding="utf-8"))
         for name, sha in index["files"].items():
             parts = name.split("/")
-            if (
-                len(parts) == 4
-                and parts[:2] == ["data", "corpus"]
-                and parts[3] == "references.json"
-            ):
+            if len(parts) == 4 and parts[:2] == ["data", "corpus"] and parts[3] in wanted:
                 backup = remote / ".checkpoint-objects" / sha[:2] / sha
                 jobs.append(([remote / name, backup], Path(corpus_dir) / parts[2] / parts[3], sha))
     counts = {"copied": 0, "reused": 0, "total": len(jobs)}
@@ -68,6 +70,34 @@ def restore_references(
             if on_progress:
                 on_progress(done, len(jobs))
     return counts
+
+
+def restore_references(
+    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=8, on_progress=None
+):
+    """Copy every indexed ``data/corpus/<folder>/references.json`` into ``corpus_dir/<folder>/``."""
+    return restore_m1_json(
+        m2_run_dir,
+        m1_drive_dir,
+        corpus_dir,
+        filenames=("references.json",),
+        workers=workers,
+        on_progress=on_progress,
+    )
+
+
+def restore_metadata(
+    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=8, on_progress=None
+):
+    """Copy every indexed ``data/corpus/<folder>/metadata.json`` into ``corpus_dir/<folder>/``."""
+    return restore_m1_json(
+        m2_run_dir,
+        m1_drive_dir,
+        corpus_dir,
+        filenames=("metadata.json",),
+        workers=workers,
+        on_progress=on_progress,
+    )
 
 
 def restore_bibtex(m2_run_dir: Path, local_out: Path, on_progress=None):
