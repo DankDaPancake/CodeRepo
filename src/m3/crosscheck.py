@@ -17,6 +17,12 @@
 
    Prints the agreement rate per labeler and overall, and lists every disagreement so the
    two people can settle it (and fix the label file if the first label was wrong).
+
+3. Audit the automatic labels the same way: ``sample --method auto --selection-csv
+   selection.csv`` draws ``--per-labeler`` entries from each of two groups, ``auto-match``
+   (the rules chose a reference) and ``auto-none`` (row of only ``no``), after checking that
+   no auto-labeled paper is also in the manual set. In ``score``, agreement on
+   ``auto-match`` is the precision of the rules and on ``auto-none`` their no-match accuracy.
 """
 
 from __future__ import annotations
@@ -71,16 +77,31 @@ SHEET = [
 ]
 
 
+def _group(method: str, pid: str, truth: str | None) -> str:
+    if method == "auto":
+        return "auto-match" if truth else "auto-none"
+    return range_owner(pid) or "unknown"
+
+
 def sample(a) -> None:
     rng = random.Random(a.seed)
-    files = list(iter_label_files(a.labels_dir, "manual"))
+    files = list(iter_label_files(a.labels_dir, a.method))
+    if a.method == "auto":
+        from src.m3.auto_label import _load_manual_ids
+
+        overlap = {pid for _, pid, _ in files} & _load_manual_ids(a.labels_dir, a.selection_csv)
+        if overlap:
+            raise SystemExit(
+                f"{len(overlap)} papers are both auto and manual: {sorted(overlap)[:5]}"
+            )
+        print(f"{len(files)} auto-labeled papers, none in the manual set")
     pool: dict[str, list[tuple]] = defaultdict(list)
     matrices = {}
     for _, pid, path in files:
         cand_ids, answers = read_matrix(path)
         matrices[pid] = cand_ids
         for key, truth in answers.items():
-            pool[range_owner(pid) or "unknown"].append((pid, key, truth))
+            pool[_group(a.method, pid, truth)].append((pid, key, truth))
     picked = []
     for labeler in sorted(pool):
         items = sorted(pool[labeler])
@@ -194,7 +215,13 @@ def main(argv=None) -> None:
     s.add_argument("--m2-dir", type=Path, required=True)
     s.add_argument("--corpus-dir", type=Path, required=True)
     s.add_argument("--labels-dir", type=Path, default=Path("labels"))
-    s.add_argument("--per-labeler", type=int, default=10)
+    s.add_argument("--method", choices=["manual", "auto"], default="manual")
+    s.add_argument(
+        "--selection-csv", type=Path, help="with --method auto: manual papers to exclude"
+    )
+    s.add_argument(
+        "--per-labeler", type=int, default=10, help="entries per labeler (or auto group)"
+    )
     s.add_argument("--show", type=int, default=20)
     s.add_argument("--seed", type=int, default=20261118)
     for q in (s, sub.add_parser("score")):
