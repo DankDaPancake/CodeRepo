@@ -27,8 +27,33 @@ import random
 from collections import defaultdict
 from pathlib import Path
 
-from src.m3.label_tool import order_candidates
-from src.m3.labels import iter_label_files, load_bibtex, load_candidates, range_owner, read_matrix
+from src.m3.cleaning import entry_mentions_arxiv_id
+from src.m3.labels import (
+    author_overlap,
+    iter_label_files,
+    load_bibtex,
+    load_candidates,
+    range_owner,
+    read_matrix,
+    title_sim,
+)
+
+
+def _rank_for_review(entry: dict, candidates: list[dict]) -> list[dict]:
+    """Order candidates for blind review using explicit arXiv ID, title and author signals."""
+    return sorted(
+        candidates,
+        key=lambda c: (
+            -int(entry_mentions_arxiv_id(entry, c["ref_arxiv_id"])),
+            -max(
+                title_sim(entry.get("title"), c["ref_title"]),
+                author_overlap(entry.get("authors"), c["ref_authors"]),
+            ),
+            -title_sim(entry.get("title"), c["ref_title"]),
+            -author_overlap(entry.get("authors"), c["ref_authors"]),
+        ),
+    )
+
 
 SHEET = [
     "item",
@@ -70,10 +95,10 @@ def sample(a) -> None:
         cands = [
             c for c in load_candidates(a.corpus_dir, pid) if c["ref_arxiv_id"] in set(matrices[pid])
         ]
-        ordered = order_candidates(e, cands)[: a.show]
+        ordered = _rank_for_review(e, cands)[: a.show]
         if truth and truth not in {c["ref_arxiv_id"] for c in ordered}:
-            # keep the first label's choice reachable, at its title-similarity position
-            ordered = order_candidates(
+            # keep the first label's choice reachable, at its review-rank position
+            ordered = _rank_for_review(
                 e, ordered + [c for c in cands if c["ref_arxiv_id"] == truth]
             )
         listing = "\n".join(
@@ -170,7 +195,7 @@ def main(argv=None) -> None:
     s.add_argument("--corpus-dir", type=Path, required=True)
     s.add_argument("--labels-dir", type=Path, default=Path("labels"))
     s.add_argument("--per-labeler", type=int, default=10)
-    s.add_argument("--show", type=int, default=10)
+    s.add_argument("--show", type=int, default=20)
     s.add_argument("--seed", type=int, default=20261118)
     for q in (s, sub.add_parser("score")):
         q.add_argument("--sheet", type=Path, default=Path("crosscheck_sheet.csv"))

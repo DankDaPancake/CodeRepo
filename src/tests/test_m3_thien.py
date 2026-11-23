@@ -21,7 +21,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from src.m3 import auto_label, candidates, cleaning, export_m1_tables, predictions
+from src.m3 import (
+    auto_label,
+    candidates,
+    cleaning,
+    crosscheck,
+    export_m1_tables,
+    hf_dataset,
+    predictions,
+)
 from src.m3.labels import label_path, read_matrix, write_matrix
 from src.m3.restore_inputs import restore_m1_json, restore_metadata
 from src.parser.writer import to_table as m2_to_table
@@ -477,3 +485,180 @@ def test_predictions_schema_validation_and_runner(tmp_path):
     ]
     with pytest.raises(ValueError, match="not in Train/Valid/Test"):
         predictions.validate_prediction_rows(bad_unlisted, allowed_partitions={P_THIEN[0]: "test"})
+
+
+def test_hf_dataset_data_prefix_and_strict_schema(tmp_path):
+    pkg = tmp_path / "pkg_thien"
+    data = pkg / "data"
+    for t in hf_dataset.TABLES:
+        (data / t).mkdir(parents=True)
+
+    pq.write_table(
+        export_m1_tables.to_table(
+            "papers",
+            [
+                {
+                    "arxiv_id": P_THIEN[0],
+                    "title": "T",
+                    "authors": ["A"],
+                    "submission_date": "2026-06-01T00:00:00Z",
+                    "revised_dates": [],
+                    "venue": None,
+                }
+            ],
+        ),
+        data / "papers" / "part-00000.parquet",
+    )
+    pq.write_table(
+        export_m1_tables.to_table(
+            "references",
+            [
+                {
+                    "arxiv_id": P_THIEN[0],
+                    "ref_arxiv_id": "1706.03762",
+                    "ref_title": "Attention",
+                    "ref_authors": ["Vaswani"],
+                    "ref_submission_date": "2017-06-12",
+                    "ref_s2_id": "s1",
+                }
+            ],
+        ),
+        data / "references" / "part-00000.parquet",
+    )
+    pq.write_table(
+        m2_to_table(
+            "elements",
+            [
+                {
+                    "element_id": "2606-30734#d0",
+                    "arxiv_id": P_THIEN[0],
+                    "kind": "document",
+                    "content": "",
+                }
+            ],
+        ),
+        data / "elements" / "part-00000.parquet",
+    )
+    pq.write_table(
+        m2_to_table(
+            "hierarchy",
+            [
+                {
+                    "arxiv_id": P_THIEN[0],
+                    "version": 1,
+                    "element_id": "2606-30734#s1",
+                    "parent_id": "2606-30734#d0",
+                }
+            ],
+        ),
+        data / "hierarchy" / "part-00000.parquet",
+    )
+    pq.write_table(
+        m2_to_table(
+            "bibtex",
+            [
+                {
+                    "arxiv_id": P_THIEN[0],
+                    "citation_key": "k1",
+                    "entry_type": "article",
+                    "title": "Attention",
+                    "authors": ["Vaswani"],
+                    "year": 2017,
+                    "doi": None,
+                    "journal": None,
+                    "url": None,
+                }
+            ],
+        ),
+        data / "bibtex" / "part-00000.parquet",
+    )
+    pq.write_table(
+        predictions.to_predictions_table(
+            [
+                {
+                    "arxiv_id": P_THIEN[0],
+                    "partition": "test",
+                    "citation_key": "k1",
+                    "groundtruth_arxiv_id": "1706.03762",
+                    "cand_1": "1706.03762",
+                    "cand_2": None,
+                    "cand_3": None,
+                    "cand_4": None,
+                    "cand_5": None,
+                }
+            ]
+        ),
+        data / "predictions" / "part-00000.parquet",
+    )
+
+    hf_dataset.main(
+        [
+            "--package-dir",
+            str(pkg),
+            "--repo-id",
+            "user/arxiv-nhom1-thien",
+            "--range",
+            "thien",
+            "--strict-schema",
+            "--dry-run",
+        ]
+    )
+    card_text = (pkg / "README.md").read_text(encoding="utf-8")
+    assert "path: data/papers/*.parquet" in card_text
+    assert "path: data/predictions/*.parquet" in card_text
+
+    # Strict schema rejects plain-string partition column in predictions.
+    bad_pred = pa.table(
+        {
+            "arxiv_id": [P_THIEN[0]],
+            "partition": ["test"],
+            "citation_key": ["k1"],
+            "groundtruth_arxiv_id": ["1706.03762"],
+            "cand_1": ["1706.03762"],
+            "cand_2": [None],
+            "cand_3": [None],
+            "cand_4": [None],
+            "cand_5": [None],
+        }
+    )
+    pq.write_table(bad_pred, data / "predictions" / "part-00000.parquet")
+    with pytest.raises(SystemExit, match="dictionary-encoded"):
+        hf_dataset.check_package(pkg, strict_schema=True)
+
+
+def test_crosscheck_review_rank_surfaces_id_and_author_matches():
+    # Simulates a misaligned BibTeX entry whose title is garbage, but DOI or authors still match.
+    distractors = [
+        {
+            "ref_arxiv_id": f"2201.{i:05d}",
+            "ref_title": f"Proceedings Volume {i} Conference Notes",
+            "ref_authors": [f"Other Author{i}"],
+            "ref_submission_date": "2022-01-01",
+        }
+        for i in range(15)
+    ]
+    target_by_id = {
+        "ref_arxiv_id": "1706.03762",
+        "ref_title": "Attention Is All You Need",
+        "ref_authors": ["Ashish Vaswani", "Noam Shazeer"],
+        "ref_submission_date": "2017-06-12",
+    }
+    entry_id = {
+        "title": "Proceedings Volume Conference",  # noisy/misaligned title
+        "authors": [],
+        "doi": "10.48550/arXiv.1706.03762",
+        "url": None,
+        "journal": None,
+    }
+    ranked_id = crosscheck._rank_for_review(entry_id, distractors + [target_by_id])
+    assert ranked_id[0]["ref_arxiv_id"] == "1706.03762"
+
+    entry_auth = {
+        "title": "Proceedings Volume Conference",
+        "authors": ["Vaswani, Ashish", "Shazeer, Noam"],
+        "doi": None,
+        "url": None,
+        "journal": None,
+    }
+    ranked_auth = crosscheck._rank_for_review(entry_auth, distractors + [target_by_id])
+    assert ranked_auth[0]["ref_arxiv_id"] == "1706.03762"

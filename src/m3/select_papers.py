@@ -5,11 +5,10 @@
 
 A paper is eligible when it has at least ``--min-entries`` BibTeX entries (statement: 20),
 at least ``--min-candidates`` candidates and at least ``--min-hits`` entries whose normalized
-that correct candidates exist, it is **not** a label. To cover several citation styles,
-eligible papers of a range are split by the share of entries that carry a DOI or URL
-(low / mid / high) and drawn round-robin from the three groups with a fixed seed.
-Output: one row per chosen paper.
-drawn round-robin from the three groups with a fixed seed. Output: one row per chosen paper.
+title matches a candidate (this only checks that correct candidates exist; it is **not** a
+label). To cover several citation styles, eligible papers of a range are split by the share of
+entries that carry a DOI or URL (low / mid / high) and drawn round-robin from the three groups
+with a fixed seed. Output: one row per chosen paper.
 """
 
 from __future__ import annotations
