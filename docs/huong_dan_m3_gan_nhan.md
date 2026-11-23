@@ -19,7 +19,7 @@ smith2020,no,yes,...                      <- mỗi hàng là một mục BibTeX,
 
 ## Chuẩn bị trên Colab
 
-**Cách nhanh nhất:** mở notebook [arxiv_nhom1_m3_labeling.ipynb](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/main/src/notebooks/arxiv_nhom1_m3_labeling.ipynb). Notebook lấy BibTeX từ `m2/derived/m2-full-no-empty-roots-01` và đối chiếu `identity.json` với `M2_MANIFEST.json` trong `m2/m2-full-01` để xác định các checkpoint M1. Notebook làm đủ các bước dưới đây, mỗi bước một ô. Nó chỉ copy `bibtex.parquet` của M2 và `references.json` của M1 từ Drive (có kiểm tra SHA-256), không restore cả corpus. Các lệnh bên dưới dành cho ai muốn tự chạy.
+**Cách nhanh nhất:** mở notebook [arxiv_nhom1_m3_labeling.ipynb](https://colab.research.google.com/github/hcmus-arxiv-nhom1/CodeRepo/blob/main/src/notebooks/arxiv_nhom1_m3_labeling.ipynb). Notebook lấy BibTeX từ `m2/derived/m2-full-no-empty-01` và đối chiếu `identity.json` với `M2_MANIFEST.json` trong `m2/m2-full-01` để xác định các checkpoint M1. Notebook làm đủ các bước dưới đây, mỗi bước một ô. Nó chỉ copy `bibtex.parquet` của M2 và `references.json` của M1 từ Drive (có kiểm tra SHA-256), không restore cả corpus. Các lệnh bên dưới dành cho ai muốn tự chạy.
 
 ```python
 !git clone -b main https://github.com/hcmus-arxiv-nhom1/CodeRepo /content/CodeRepo

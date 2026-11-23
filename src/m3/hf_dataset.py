@@ -23,6 +23,7 @@ import os
 import shutil
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config import RANGES
@@ -30,26 +31,84 @@ from src.m3.labels import iter_label_files, range_owner
 
 TABLES = ["papers", "references", "elements", "hierarchy", "bibtex", "predictions"]
 
+# Required columns per M1/M2/M3 statements (used by --strict-schema).
+REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "papers": ("arxiv_id", "title", "authors", "submission_date", "revised_dates", "venue"),
+    "references": (
+        "arxiv_id",
+        "ref_arxiv_id",
+        "ref_title",
+        "ref_authors",
+        "ref_submission_date",
+        "ref_s2_id",
+    ),
+    "elements": ("element_id", "arxiv_id", "kind", "content"),
+    "hierarchy": ("arxiv_id", "version", "element_id", "parent_id"),
+    "bibtex": (
+        "arxiv_id",
+        "citation_key",
+        "entry_type",
+        "title",
+        "authors",
+        "year",
+        "doi",
+        "journal",
+        "url",
+    ),
+    "predictions": (
+        "arxiv_id",
+        "partition",
+        "citation_key",
+        "groundtruth_arxiv_id",
+        "cand_1",
+        "cand_2",
+        "cand_3",
+        "cand_4",
+        "cand_5",
+    ),
+}
 
-def check_package(pkg: Path) -> dict[str, int]:
-    """Rows per table; raises if a table is missing or has nested (non-flat) columns."""
+DICTIONARY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "elements": ("kind",),
+    "bibtex": ("entry_type",),
+    "predictions": ("partition",),
+}
+
+
+def detect_table_prefix(pkg: Path) -> str:
+    """Return ``'data/'`` when the M3 ``data/<table>/`` layout is present, else ``''``."""
+    return "data/" if any((pkg / "data" / t).is_dir() for t in TABLES) else ""
+
+
+def check_package(pkg: Path, *, strict_schema: bool = False) -> dict[str, int]:
+    """Rows per table; raises if a table is missing, nested, or (when strict) off-schema."""
+    prefix = detect_table_prefix(pkg)
+    base = pkg / "data" if prefix else pkg
     rows = {}
     for t in TABLES:
-        files = sorted((pkg / t).glob("*.parquet"))
+        files = sorted((base / t).glob("*.parquet"))
         if not files:
-            raise SystemExit(f"{pkg / t}: no Parquet shard")
+            raise SystemExit(f"{base / t}: no Parquet shard")
         schema = pq.read_schema(files[0])
         nested = [f.name for f in schema if str(f.type).startswith(("struct", "map"))]
         if nested:
             raise SystemExit(f"{t}: nested columns {nested}; columns must be flat")
+        if strict_schema:
+            names = set(schema.names)
+            missing = [c for c in REQUIRED_COLUMNS[t] if c not in names]
+            if missing:
+                raise SystemExit(f"{t}: missing required columns {missing}")
+            for col in DICTIONARY_COLUMNS.get(t, ()):
+                if not pa.types.is_dictionary(schema.field(col).type):
+                    raise SystemExit(f"{t}.{col}: expected dictionary-encoded string column")
         rows[t] = sum(pq.ParquetFile(f).metadata.num_rows for f in files)
     return rows
 
 
-def card(repo_id: str, owner: str, rows: dict[str, int]) -> str:
+def card(repo_id: str, owner: str, rows: dict[str, int], *, prefix: str = "") -> str:
     start, end = RANGES[owner]
     configs = "\n".join(
-        f"- config_name: {t}\n  data_files:\n  - split: train\n    path: {t}/*.parquet"
+        f"- config_name: {t}\n  data_files:\n  - split: train\n    path: {prefix}{t}/*.parquet"
         for t in TABLES
     )
     counts = "\n".join(f"| `{t}` | {rows[t]:,} |" for t in TABLES)
@@ -111,17 +170,23 @@ def main(argv=None) -> None:
     p.add_argument("--repo-id", required=True, help="<hf-user>/<dataset-name>")
     p.add_argument("--range", required=True, choices=sorted(RANGES))
     p.add_argument("--labels-dir", type=Path, help="copy this range's label matrices into labels/")
+    p.add_argument(
+        "--strict-schema",
+        action="store_true",
+        help="validate required column names and dictionary-encoded columns of all 6 tables",
+    )
     p.add_argument("--dry-run", action="store_true", help="check and write the card, no upload")
     a = p.parse_args(argv)
 
-    rows = check_package(a.package_dir)
+    prefix = detect_table_prefix(a.package_dir)
+    rows = check_package(a.package_dir, strict_schema=a.strict_schema)
     for t in TABLES:
         print(f"{t:<12} {rows[t]:>12,} rows")
     if a.labels_dir:
         print(f"labels: {stage_labels(a.labels_dir, a.range, a.package_dir)} files")
     readme = a.package_dir / "README.md"
     if not readme.exists():
-        readme.write_text(card(a.repo_id, a.range, rows), encoding="utf-8")
+        readme.write_text(card(a.repo_id, a.range, rows, prefix=prefix), encoding="utf-8")
         print(f"wrote {readme}")
     if a.dry_run:
         return
@@ -140,7 +205,7 @@ def main(argv=None) -> None:
         repo_id=a.repo_id,
         repo_type="dataset",
         folder_path=str(a.package_dir),
-        allow_patterns=["README.md", *(f"{t}/*.parquet" for t in TABLES), "labels/**"],
+        allow_patterns=["README.md", *(f"{prefix}{t}/*.parquet" for t in TABLES), "labels/**"],
         commit_message="M3: six tables, labels and dataset card",
     )
     print(f"uploaded https://huggingface.co/datasets/{a.repo_id}")
