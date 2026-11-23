@@ -243,3 +243,25 @@ def test_restore_inputs_copies_only_verified_references(tmp_path):
     (corpus / "2606-25801/references.json").unlink()
     with pytest.raises(ValueError, match="indexed hash"):
         restore_references(m2run, m1, corpus)
+
+
+def test_crosscheck_auto_audit_groups_and_overlap_guard(tmp_path, capsys):
+    m2, corpus = _corpus(tmp_path)
+    labels = tmp_path / "labels"
+    cand_ids = [c["ref_arxiv_id"] for c in load_candidates(corpus, OTHER)]
+    auto = {f"k{i:02d}": (None if i < 5 else f"2001.{i:05d}") for i in range(22)}
+    write_matrix(label_path(labels, "auto", OTHER), cand_ids, auto)
+    sel = tmp_path / "selection.csv"
+    sel.write_text(f"range_owner,arxiv_id\ntien,{PID}\n", encoding="utf-8")
+    sheet, key = tmp_path / "sheet.csv", tmp_path / "key.csv"
+    base = ["sample", "--method", "auto", "--m2-dir", str(m2), "--corpus-dir", str(corpus),
+            "--labels-dir", str(labels), "--selection-csv", str(sel), "--per-labeler", "4",
+            "--sheet", str(sheet), "--key", str(key)]  # fmt: skip
+    crosscheck.main(base)
+    rows = list(csv.DictReader(sheet.open(encoding="utf-8-sig")))
+    assert sorted(r["labeler"] for r in rows) == ["auto-match"] * 4 + ["auto-none"] * 4
+    assert "none in the manual set" in capsys.readouterr().out
+
+    write_matrix(label_path(labels, "auto", PID), cand_ids, {})  # PID is in selection.csv
+    with pytest.raises(SystemExit, match="both auto and manual"):
+        crosscheck.main(base)

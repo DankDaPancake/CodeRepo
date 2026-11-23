@@ -48,7 +48,7 @@ def restore_m1_json(
     m1_drive_dir: Path,
     corpus_dir: Path,
     filenames: tuple[str, ...] = ("metadata.json", "references.json"),
-    workers: int = 8,
+    workers: int = 32,  # Drive reads are latency-bound: 8 -> ~6 files/s, 32 -> ~11 files/s on Colab
     on_progress=None,
 ) -> dict[str, int]:
     """Copy indexed M1 JSON files (e.g. ``metadata.json``, ``references.json``) with SHA-256."""
@@ -73,7 +73,7 @@ def restore_m1_json(
 
 
 def restore_references(
-    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=8, on_progress=None
+    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=32, on_progress=None
 ):
     """Copy every indexed ``data/corpus/<folder>/references.json`` into ``corpus_dir/<folder>/``."""
     return restore_m1_json(
@@ -87,7 +87,7 @@ def restore_references(
 
 
 def restore_metadata(
-    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=8, on_progress=None
+    m2_run_dir: Path, m1_drive_dir: Path, corpus_dir: Path, workers=32, on_progress=None
 ):
     """Copy every indexed ``data/corpus/<folder>/metadata.json`` into ``corpus_dir/<folder>/``."""
     return restore_m1_json(
