@@ -197,6 +197,93 @@ python -m src.parser.bibitem data/corpus/2606-30762/v1          # the references
 - **The whole corpus on Colab:** the group crawl is five runs (`only-v1-all` and one `multi-*` run per member), each with `data/corpus` and `work/` on Drive. Open the [M2 notebook](src/notebooks/arxiv_nhom1_m2_parse_benchmark.ipynb) on a CPU runtime: it checks that the five runs are complete (20,000 IDs), restores them to the local disk with SHA-256 verification (setup, not benchmarked), runs `m2_benchmark` over all of them as one corpus (`--data-root` and `--crawl-work-dir` repeated, `--expect-assigned` stops unless the papers are exactly the assigned IDs), copies the state to Drive every 10 minutes and exports the CSV files of the Book. After a lost runtime, open it again with `RESUME = True` and the same `M2_RUN_ID`; every session is logged in `m2_sessions.jsonl` and the report adds them up.
 - **Eyeball audit (30 random papers):** `python -m src.qa.audit_sample draw --out-dir data/m2 --work-dir work/m2 --data-root data/corpus --report audit -n 30 --seed 2026` writes one Markdown file per paper (rebuilt tree next to the source path) and a blank score sheet; after reading, `python -m src.qa.audit_sample score audit/audit_sheet.csv --out audit/audit_summary.csv` gives the accuracy per criterion and the error list for the book. `audit/` is git-ignored.
 
+## Reference Matching Pipeline (M3)
+
+Milestone 3 matches each standardized BibTeX entry from Milestone 2 (`bibtex` table, filtered run `m2-full-no-empty-01` with 0 QA issues across 20,000 papers) to its corresponding arXiv-keyed crawled reference from Milestone 1 (`references` table) within the same publication, ranking the top-5 candidate references per entry (evaluated by **MRR@5**). All methods in this repository are classical (no LLMs or pretrained external models).
+
+### Label Matrix Format
+
+Ground-truth labels are stored outside the code repository (staged under `labels/` in the published Hugging Face dataset) as one CSV file per publication: `labels/<method>/<yymm-num>.csv`, where `<method>` is `manual` or `auto`.
+
+```text
+citation_key,2602.17657,2401.00001,...   # columns: candidate ref_arxiv_id values of the paper
+smith2020,no,yes,...                      # rows: BibTeX entries; cells are strictly yes/no
+```
+
+- Candidate columns are the deduplicated `references` rows of that publication carrying a non-null `arxiv_id`, in original order (`src/m3/labels.py`).
+- Each labeled row has **at most one** `yes` cell (the true reference), or all `no` cells when no crawled arXiv reference matches (e.g., books or non-arXiv articles). `read_matrix` rejects malformed matrices.
+
+### Pipeline Steps & Commands
+
+All M3 modules operate in bounded memory (shard-by-shard PyArrow reads) on Google Colab CPU runtimes:
+
+```bash
+# 1. Select 20 manual papers (5 per range, Q >= 20 BibTeX entries each, stratified by DOI/URL share)
+python -m src.m3.select_papers --m2-dir data/m2 --corpus-dir data/corpus --out m3/selection.csv
+
+# 2. Interactive manual labeling (never pre-fills answers; saves atomically after every entry)
+python -m src.m3.label_tool --m2-dir data/m2 --corpus-dir data/corpus --labels-dir m3/labels --arxiv-id 2606.30734
+
+# 3. Export M1 metadata.json & references.json to sharded zstd Parquet (papers & references tables)
+python -m src.m3.export_m1_tables --corpus-dir data/corpus --out-dir m3/m1_tables_by_range --split-by-range --shard-papers 500
+
+# 4. Build sharded candidate matrices (arxiv_id, citation_key, ref_arxiv_id)
+python -m src.m3.candidates --m2-dir data/m2 --refs-dir m3/m1_tables_all/data/references --out-dir m3/candidates
+
+# 5. Classical rule-based auto-labeling (>= 10% of non-manual papers, stratified across 4 ranges)
+#    Cascade: explicit arXiv ID in doi/url/journal -> exact cleaned title -> high title + author -> very high title
+python -m src.m3.auto_label run --m2-dir data/m2 --refs-dir m3/m1_tables_all/data/references \
+    --labels-dir m3/labels --selection-csv m3/selection.csv --total-corpus-papers 20000 --min-papers 2000
+python -m src.m3.auto_label evaluate --m2-dir data/m2 --refs-dir m3/m1_tables_all/data/references \
+    --labels-dir m3/labels --out-dir m3/auto_eval
+
+# 6. Blind cross-check (manual labels per member, or auto labels split into auto-match / auto-none)
+python -m src.m3.crosscheck sample --method auto --m2-dir data/m2 --corpus-dir data/corpus \
+    --labels-dir m3/labels --selection-csv m3/selection.csv --sheet m3/auto_sheet.csv --key m3/auto_key.csv
+python -m src.m3.crosscheck score --sheet m3/auto_sheet.csv --key m3/auto_key.csv
+
+# 7. Deterministic Train / Valid / Test split (4 manual + 4 auto in Valid and Test; remaining in Train)
+python -m src.m3.split_partitions create --labels-dir m3/labels --selection-csv m3/selection.csv --out m3/partitions.csv
+python -m src.m3.split_partitions verify --labels-dir m3/labels --selection-csv m3/selection.csv --partitions m3/partitions.csv
+
+# 8. Train-only feature signal EDA (strictly excludes Valid & Test to prevent leakage)
+python -m src.m3.analysis --m2-dir data/m2 --corpus-dir data/corpus --labels-dir m3/labels \
+    --partitions m3/partitions.csv --out-dir m3/analysis_train
+
+# 9. Run the trained ranker and export schema-validated predictions Parquet
+python -m src.m3.predictions --m2-dir data/m2 --refs-dir m3/m1_tables_all/data/references \
+    --labels-dir m3/labels --partitions m3/partitions.csv --out-dir m3/predictions_by_range \
+    --ranker <module:function> --split-by-range
+
+# 10. Package all 6 Parquet tables under data/<table>/*.parquet and publish to Hugging Face
+python -m src.m3.package_dataset --m1-dir m3/m1_tables_by_range --m2-dir data/m2 \
+    --predictions-dir m3/predictions_by_range --labels-dir m3/labels --out-dir m3/packages --mode by-range
+HF_TOKEN=... python -m src.m3.hf_dataset --package-dir m3/packages/thien \
+    --repo-id <hf-user>/arxiv-nhom1-thien --range thien --labels-dir m3/labels --strict-schema
+```
+
+Colab notebooks for M3:
+- [`src/notebooks/arxiv_nhom1_m3_labeling.ipynb`](src/notebooks/arxiv_nhom1_m3_labeling.ipynb): manual labeling, cross-check, Train EDA, and HF upload.
+- [`src/notebooks/arxiv_nhom1_m3_thien_pipeline.ipynb`](src/notebooks/arxiv_nhom1_m3_thien_pipeline.ipynb): M1 Parquet export, sharded candidates, auto-labeling, and `predictions` export.
+- [`src/notebooks/arxiv_nhom1_m3_split_and_package.ipynb`](src/notebooks/arxiv_nhom1_m3_split_and_package.ipynb): frozen `partitions.csv` split, Train EDA, 6-table packaging, and HF strict-schema upload.
+
+### Data Cleaning & Feature Engineering
+
+Text cleaning is centralized in `src/m3/cleaning.py` (LaTeX accent/command stripping, Unicode NFKD folding, lowercasing, stop-word removal for title content tokens, surname extraction for `Last, First` and `First Last` formats, and bounded new-style/old-style arXiv ID extraction). Raw pair-level signals (`title_sim`, `author_overlap`, `year_diff`, `id_in_entry`) and baseline `title_sim` MRR@5 are computed strictly on Train via `src/m3/analysis.py`. *(Final model features, justification table, and Test MRR@5 results will be added here once modeling finishes.)*
+
+### Published Hugging Face Dataset Schema
+
+Each published dataset repository contains flat, zstd-compressed sharded Parquet tables under `data/` with a YAML `configs` dataset card (`README.md`) and no custom loading script:
+
+| Table | Path | Key Columns & Types |
+| --- | --- | --- |
+| `papers` | `data/papers/*.parquet` | `arxiv_id` (non-null), `title`, `authors` (`list<string>`), `submission_date`, `revised_dates` (`list<string>`), `venue` |
+| `references` | `data/references/*.parquet` | `arxiv_id` (non-null), `ref_arxiv_id` (non-null), `ref_title`, `ref_authors` (`list<string>`), `ref_submission_date`, `ref_s2_id` |
+| `elements` | `data/elements/*.parquet` | `element_id` (non-null), `arxiv_id` (non-null), `kind` (`dictionary`), `content` |
+| `hierarchy` | `data/hierarchy/*.parquet` | `arxiv_id` (non-null), `version` (`int32`), `element_id` (non-null), `parent_id` (non-null) |
+| `bibtex` | `data/bibtex/*.parquet` | `arxiv_id` (non-null), `citation_key` (non-null), `entry_type` (`dictionary`), `title`, `authors` (`list<string>`), `year` (`int32`), `doi`, `journal`, `url` |
+| `predictions` | `data/predictions/*.parquet` | `arxiv_id` (non-null), `partition` (`dictionary`: `train`/`valid`/`test`), `citation_key` (non-null), `groundtruth_arxiv_id`, `cand_1`..`cand_5` |
+
 ## References
 
 Online documents the crawler and the gathering code rely on:
